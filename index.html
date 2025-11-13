@@ -35,13 +35,29 @@
     #overlay textarea { min-height: 120px; }
     #overlay button { margin-top: 12px; width: 100%; }
 
-    /* 普通表单与列表 */
-    form { display:none; gap:12px; margin: 16px 0; }
+    /* 普通表单与列表（仅隐藏底部常规表单） */
+    #commentForm { display:none; gap:12px; margin: 16px 0; }
     input, textarea, button { font-size: 16px; }
     input, textarea { padding: 10px; border:1px solid #ddd; border-radius:8px; flex:1; }
     textarea { min-height: 100px; }
     button { padding: 10px 16px; border: none; border-radius: 8px; background: #2962ff; color:#fff; cursor:pointer; }
     button:disabled { background:#999; cursor:not-allowed; }
+
+    /* 弹窗覆盖层：确保可点击 */
+    #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:10; pointer-events:auto; }
+    #overlay .card {
+      width: min(90%, 520px);
+      background:#fff;
+      border-radius:12px;
+      box-shadow:0 8px 30px rgba(0,0,0,.3);
+      padding: 20px;
+    }
+    #overlay h3 { margin: 0 0 12px; font-size: 20px; text-align:center; }
+    #overlay .row { display:flex; gap:12px; margin-top: 12px; }
+    /* 显示弹窗表单（取消被全局隐藏的影响） */
+    #overlayForm { display:block; }
+    #overlay textarea { min-height: 120px; }
+    #overlay button { margin-top: 12px; width: 100%; }
 
     #status { color:#666; margin-top:12px; }
     #list .item { border-bottom:1px solid #eee; padding:12px 0; }
@@ -100,7 +116,8 @@
       <button id="submitBtn" type="submit">提交</button>
     </form>
 
-    <div id="status">尚未加载</div>
+    <!-- 状态区域：去掉默认“尚未加载” -->
+    <div id="status"></div>
     <div id="list"></div>
     <div style="margin-top:12px;">
       <button id="moreBtn" style="background:#555;">加载更多</button>
