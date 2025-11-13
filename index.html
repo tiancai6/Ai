@@ -8,16 +8,34 @@
     body { font-family: system-ui, -apple-system, Segoe UI, Arial; margin: 40px; background:#fafafa; }
     #container { max-width: 900px; margin: 0 auto; }
     #playBtn { font-size: 18px; padding: 10px 20px; }
+
     #videoWrap { position: relative; margin-top: 20px; display:none; }
     #video { width: 100%; background:#000; }
     #danmakuLayer { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
     .dm { position:absolute; right:-20%; color:#fff; font-weight:600; text-shadow: 1px 1px 2px #000;
           white-space:nowrap; will-change:transform, opacity; animation: dm-move linear 8s forwards; }
-    @keyframes dm-move { 0% { transform: translateX(0); opacity: 1; } 90% { opacity: 1; } 100% { transform: translateX(-140%); opacity: 0; } }
+    @keyframes dm-move {
+      0% { transform: translateX(0); opacity: 1; }
+      90% { opacity: 1; }
+      100% { transform: translateX(-140%); opacity: 0; }
+    }
 
-    #gate { margin-top: 16px; padding: 12px; border: 1px solid #ddd; border-radius: 8px; display:none; }
-    #gate button { margin-right: 8px; padding: 8px 14px; }
+    /* 视频结束后的居中弹窗 */
+    #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:10; }
+    #overlay .card {
+      width: min(90%, 520px);
+      background:#fff;
+      border-radius:12px;
+      box-shadow:0 8px 30px rgba(0,0,0,.3);
+      padding: 20px;
+    }
+    #overlay h3 { margin: 0 0 12px; font-size: 20px; text-align:center; }
+    #overlay .row { display:flex; gap:12px; margin-top: 12px; }
+    #overlay input, #overlay textarea, #overlay button { font-size: 16px; }
+    #overlay textarea { min-height: 120px; }
+    #overlay button { margin-top: 12px; width: 100%; }
 
+    /* 普通表单与列表 */
     form { display:none; gap:12px; margin: 16px 0; }
     input, textarea, button { font-size: 16px; }
     input, textarea { padding: 10px; border:1px solid #ddd; border-radius:8px; flex:1; }
@@ -57,15 +75,25 @@
     <div id="videoWrap">
       <video id="video" src="video.mp4" controls></video>
       <div id="danmakuLayer"></div>
+
+      <!-- 视频结束后的居中弹窗 -->
+      <div id="overlay">
+        <div class="card">
+          <h3>你觉得爱是什么</h3>
+          <form id="overlayForm">
+            <div class="row">
+              <input id="overlayAuthor" type="text" placeholder="昵称（可选）" maxlength="128">
+            </div>
+            <div class="row">
+              <textarea id="overlayContent" placeholder="写下你的想法..." maxlength="2000"></textarea>
+            </div>
+            <button id="overlaySubmit" type="submit">提交</button>
+          </form>
+        </div>
+      </div>
     </div>
 
-    <div id="gate">
-      <p>视频播放完毕，请选择：</p>
-      <button id="gateWatchBtn">我已观看</button>
-      <button id="gateContinueBtn">继续学习</button>
-      <button id="unlockBtn">开始评论</button>
-    </div>
-
+    <!-- 底部常规评论表单（首次隐藏，提交第一条后显示，便于继续评论） -->
     <form id="commentForm">
       <input id="author" type="text" placeholder="昵称（可选）" maxlength="128">
       <textarea id="content" placeholder="说点什么..." maxlength="2000"></textarea>
@@ -80,13 +108,17 @@
   </div>
 
   <script>
+    // 变量与元素引用
     const playBtn = document.getElementById('playBtn');
     const videoWrap = document.getElementById('videoWrap');
     const video = document.getElementById('video');
     const danmakuLayer = document.getElementById('danmakuLayer');
 
-    const gate = document.getElementById('gate');
-    const unlockBtn = document.getElementById('unlockBtn');
+    const overlay = document.getElementById('overlay');
+    const overlayForm = document.getElementById('overlayForm');
+    const overlayAuthorEl = document.getElementById('overlayAuthor');
+    const overlayContentEl = document.getElementById('overlayContent');
+    const overlaySubmitBtn = document.getElementById('overlaySubmit');
 
     const formEl = document.getElementById('commentForm');
     const authorEl = document.getElementById('author');
@@ -97,27 +129,60 @@
     const listEl = document.getElementById('list');
     const moreBtn = document.getElementById('moreBtn');
 
+    // 状态
     const thread = (location.pathname.replace(/[^a-z0-9/_-]/gi, '_') || '/').toLowerCase();
     let offset = 0, limit = 20, loading = false, done = false;
     let dmIndexBySec = new Map();
     let shownById = new Set();
     let danmakuEnabled = false; // 首次不展示历史弹幕，评论成功后开启
 
+    // 播放按钮
     playBtn.addEventListener('click', () => {
       playBtn.style.display = 'none';
       videoWrap.style.display = 'block';
       video.play().catch(() => {});
     });
 
+    // 视频结束：显示居中弹窗
     video.addEventListener('ended', () => {
-      gate.style.display = 'block';
+      overlay.style.display = 'flex';
     });
 
-    unlockBtn.addEventListener('click', () => {
-      formEl.style.display = 'flex';
-      statusEl.textContent = '评论已解锁';
+    // 弹窗提交评论
+    overlayForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const author = overlayAuthorEl.value.trim();
+      const content = overlayContentEl.value.trim();
+      if (!content) { alert('内容不能为空'); return; }
+      overlaySubmitBtn.disabled = true;
+      try {
+        const at = Math.floor(video.currentTime || 0);
+        const resp = await fetch('/comments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread, author, content, at_seconds: at })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || '提交失败');
+
+        // 展示自己刚提交的评论与弹幕
+        listEl.insertAdjacentHTML('afterbegin', renderItem(data.item));
+        overlayContentEl.value = '';
+        statusEl.textContent = '提交成功';
+        showDanmakuNow(data.item);
+
+        // 隐藏弹窗，展示评论与历史弹幕，并显示底部常规表单以便继续评论
+        overlay.style.display = 'none';
+        formEl.style.display = 'flex';
+        revealCommentsAndDanmaku();
+      } catch (err) {
+        alert('提交失败：' + (err.message || err));
+      } finally {
+        overlaySubmitBtn.disabled = false;
+      }
     });
 
+    // 底部常规表单，继续评论（可选，不影响首次 gating）
     formEl.addEventListener('submit', async (e) => {
       e.preventDefault();
       const author = authorEl.value.trim();
@@ -134,14 +199,10 @@
         const data = await resp.json();
         if (!resp.ok || !data.ok) throw new Error(data.error || '提交失败');
 
-        // 先显示自己的评论与弹幕（允许看到自己刚发的那条）
         listEl.insertAdjacentHTML('afterbegin', renderItem(data.item));
         contentEl.value = '';
         statusEl.textContent = '提交成功';
         showDanmakuNow(data.item);
-
-        // 然后再显示所有评论并开启历史弹幕
-        revealCommentsAndDanmaku();
       } catch (err) {
         statusEl.textContent = '提交失败：' + (err.message || err);
       } finally {
@@ -149,11 +210,13 @@
       }
     });
 
+    // 加载更多
     moreBtn.addEventListener('click', () => {
       if (done || loading) return;
       loadComments();
     });
 
+    // 拉取评论并建立弹幕索引（仅在展示后使用）
     async function loadComments() {
       loading = true;
       statusEl.textContent = '正在加载评论...';
@@ -163,11 +226,9 @@
         if (!resp.ok || !data.ok) throw new Error(data.error || '拉取失败');
         if (data.items.length === 0) { done = true; moreBtn.disabled = true; statusEl.textContent = '没有更多了'; return; }
         data.items.forEach(item => {
-          // 避免重复渲染：如果已存在该评论的元素则跳过
           if (!document.querySelector(`.item[data-id="${item.id}"]`)) {
             listEl.insertAdjacentHTML('beforeend', renderItem(item));
           }
-          // 为历史弹幕建立索引（仅在开启后用于 timeupdate）
           if (Number.isFinite(item.at_seconds)) {
             const sec = item.at_seconds;
             if (!dmIndexBySec.has(sec)) dmIndexBySec.set(sec, []);
@@ -183,6 +244,31 @@
       }
     }
 
+    // 点赞事件代理
+    listEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.likeBtn');
+      if (!btn) return;
+
+      const itemEl = btn.closest('.item');
+      const id = Number(itemEl?.dataset?.id || 0);
+      if (!id || isLiked(id)) return;
+
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/comments/${id}/like`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || '点赞失败');
+
+        const countEl = btn.querySelector('.likeCount');
+        if (countEl) countEl.textContent = String(data.likes_count);
+        localStorage.setItem('liked:' + id, '1');
+      } catch (err) {
+        btn.disabled = false;
+        alert('点赞失败：' + (err.message || err));
+      }
+    });
+
+    // 工具函数与渲染
     function isLiked(id) {
       return localStorage.getItem('liked:' + id) === '1';
     }
@@ -190,11 +276,10 @@
       const author = item.author ? escapeHtml(item.author) : '匿名';
       const content = escapeHtml(item.content || '');
       const time = formatTime(item.created_at);
-      const atText = Number.isFinite(item.at_seconds) ? ` · 弹幕于 ${item.at_seconds}s` : '';
       const likedAttr = isLiked(item.id) ? 'disabled' : '';
       return `
         <div class="item" data-id="${item.id}">
-          <div class="meta">${author} · ${time}${atText}
+          <div class="meta">${author} · ${time}
             <button class="likeBtn" ${likedAttr} title="点赞">
               👍 <span class="likeCount">${item.likes_count || 0}</span>
             </button>
@@ -203,7 +288,6 @@
         </div>
       `;
     }
-
     function escapeHtml(str) {
       return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
     }
@@ -220,7 +304,6 @@
       danmakuLayer.appendChild(el);
       el.addEventListener('animationend', () => el.remove());
     }
-
     function pickY() {
       const h = danmakuLayer.clientHeight || 300;
       const lines = Math.max(6, Math.floor(h / 28));
@@ -228,8 +311,9 @@
       return Math.min(h - 24, Math.max(0, line * 24));
     }
 
+    // 历史弹幕仅在开启后播放
     video.addEventListener('timeupdate', () => {
-      if (!danmakuEnabled) return; // 首次不显示历史弹幕
+      if (!danmakuEnabled) return;
       const sec = Math.floor(video.currentTime || 0);
       const items = dmIndexBySec.get(sec) || [];
       items.forEach(item => {
@@ -239,17 +323,16 @@
       });
     });
 
-    // 提交评论成功后，展示评论与开启历史弹幕
+    // 提交评论成功后：展示评论与开启历史弹幕
     function revealCommentsAndDanmaku() {
       listEl.style.display = 'block';
       moreBtn.style.display = 'inline-block';
       danmakuEnabled = true;
-      // 重置并加载评论
       offset = 0; done = false; dmIndexBySec.clear(); shownById.clear();
       loadComments();
     }
 
-    // 不要在首次加载时拉取评论，保持隐藏直到评论成功
+    // 不在首次加载时拉取评论，保持隐藏直到评论成功
   </script>
 </body>
 </html>
