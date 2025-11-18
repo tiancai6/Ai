@@ -82,6 +82,9 @@
 
     /* 首次访问：隐藏评论列表与“加载更多” */
     #list, #moreBtn { display: none; }
+    /* 词云容器与词条样式 */
+    #wordcloud { display:none; border: 1px solid #eee; border-radius: 8px; padding: 12px; background:#fff; margin-top:12px; }
+    #wordcloud .token { display:inline-block; margin:6px 8px; padding:2px 4px; border-radius:4px; background:#f5f7ff; color:#333; }
   </style>
 </head>
 <body>
@@ -121,6 +124,11 @@
     <div id="list"></div>
     <div style="margin-top:12px;">
       <button id="moreBtn" style="background:#555;">加载更多</button>
+    </div>
+    <!-- 新增：词云按钮与容器 -->
+    <div id="wcWrap" style="margin-top:16px;">
+      <button id="wcBtn" style="background:#2962ff;">生成词云</button>
+      <div id="wordcloud"></div>
     </div>
   </div>
 
@@ -346,8 +354,87 @@
       moreBtn.style.display = 'inline-block';
       danmakuEnabled = true;
       offset = 0; done = false; dmIndexBySec.clear(); shownById.clear();
-      loadComments();
+      // 加载评论后自动生成一次词云
+      loadComments().then(() => genWordCloud(true)).catch(() => {});
     }
+    
+    // --- 新增：词云逻辑 ---
+    const wcWrap = document.getElementById('wcWrap');
+    const wcBtn = document.getElementById('wcBtn');
+    const wcEl = document.getElementById('wordcloud');
+    
+    wcBtn.addEventListener('click', () => genWordCloud(false));
+    
+    async function genWordCloud(auto = false) {
+      try {
+        statusEl.textContent = '正在生成词云...';
+        const tokens = await collectTokensFromAllComments();
+        renderWordCloud(tokens);
+        statusEl.textContent = '词云已生成';
+        wcEl.style.display = 'block';
+        if (!auto) wcEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (err) {
+        statusEl.textContent = '词云生成失败：' + (err.message || err);
+      }
+    }
+    
+    async function collectTokensFromAllComments() {
+      let wcOffset = 0;
+      const wcLimit = 100;
+      const texts = [];
+      while (true) {
+        const resp = await fetch(`/comments?thread=${encodeURIComponent(thread)}&limit=${wcLimit}&offset=${wcOffset}`);
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || '拉取失败');
+        if (data.items.length === 0) break;
+        texts.push(...data.items.map(i => String(i.content || '')));
+        wcOffset += data.items.length;
+        if (data.items.length < wcLimit) break;
+      }
+      return buildFrequencies(texts);
+    }
+    
+    function buildFrequencies(texts) {
+      const stop = new Set(['的','了','是','我','你','他','她','它','在','和','与','就','都','很','也','这','那','一个','我们','他们','因为','所以','如果','但是','而且','不是','还有','会','能','把','被','给','让','呢','嘛','吗','啊','哦','呃']);
+      const freq = new Map();
+      const normalize = s => s.toLowerCase().replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, ' ');
+      const add = w => {
+        if (!w) return;
+        if (stop.has(w)) return;
+        if (w.length < 2) return;
+        freq.set(w, (freq.get(w) || 0) + 1);
+      };
+      for (const t of texts) {
+        const s = normalize(t);
+        // 英文/拼音等：按词匹配
+        const words = s.match(/\p{L}[\p{L}\p{N}_]{1,}/gu) || [];
+        words.forEach(add);
+        // 中文：用双字滑窗作为近似“词”
+        const zhSeqs = s.match(/[\u4e00-\u9fff]+/g) || [];
+        zhSeqs.forEach(seq => {
+          if (seq.length >= 2) {
+            for (let i = 0; i < seq.length - 1; i++) add(seq.slice(i, i + 2));
+          }
+        });
+      }
+      const arr = Array.from(freq.entries()).map(([word, count]) => ({ word, count }));
+      arr.sort((a, b) => b.count - a.count);
+      return arr.slice(0, 80); // 取 Top 80
+    }
+    
+    function renderWordCloud(tokens) {
+      const max = tokens.length ? tokens[0].count : 1;
+      const min = tokens.length ? tokens[tokens.length - 1].count : 1;
+      const scale = c => {
+        const t = (c - min) / Math.max(1, (max - min));
+        return Math.round(14 + t * 34); // 14px ~ 48px
+      };
+      wcEl.innerHTML = tokens.map(t =>
+        `<span class="token" style="font-size:${scale(t.count)}px; opacity:${0.6 + Math.min(0.4, t.count / max)}">${escapeHtml(t.word)}</span>`
+      ).join('');
+      wcEl.style.display = 'block';
+    }
+    // --- 词云逻辑结束 ---
 
     // 不在首次加载时拉取评论，保持隐藏直到评论成功
   </script>
