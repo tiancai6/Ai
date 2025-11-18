@@ -125,11 +125,12 @@
     <div style="margin-top:12px;">
       <button id="moreBtn" style="background:#555;">加载更多</button>
     </div>
-    <!-- 新增：词云按钮与容器 -->
-    <div id="wcWrap" style="margin-top:16px;">
+    <!-- 爱心词云按钮与画布 -->
+    <div id="wcWrap">
       <button id="wcBtn" style="background:#2962ff;">生成词云</button>
-      <div id="wordcloud"></div>
+      <canvas id="wordcloudCanvas"></canvas>
     </div>
+    <div id="wordcloud"></div>
   </div>
 
   <script>
@@ -354,30 +355,32 @@
       moreBtn.style.display = 'inline-block';
       danmakuEnabled = true;
       offset = 0; done = false; dmIndexBySec.clear(); shownById.clear();
-      // 加载评论后自动生成一次词云
+      // 加载评论后自动生成一次词云（爱心形状）
       loadComments().then(() => genWordCloud(true)).catch(() => {});
     }
-    
-    // --- 新增：词云逻辑 ---
+
+    // 修复：移除原来误放入的 CSS（#wcWrap、#wordcloudCanvas），以下仅保留 JS 代码
     const wcWrap = document.getElementById('wcWrap');
     const wcBtn = document.getElementById('wcBtn');
-    const wcEl = document.getElementById('wordcloud');
+    const wcCanvas = document.getElementById('wordcloudCanvas');
     
     wcBtn.addEventListener('click', () => genWordCloud(false));
     
+    // 生成词云入口
     async function genWordCloud(auto = false) {
       try {
         statusEl.textContent = '正在生成词云...';
         const tokens = await collectTokensFromAllComments();
-        renderWordCloud(tokens);
+        renderWordCloudHeart(tokens);
         statusEl.textContent = '词云已生成';
-        wcEl.style.display = 'block';
-        if (!auto) wcEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        wcCanvas.style.display = 'block';
+        if (!auto) wcCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
       } catch (err) {
         statusEl.textContent = '词云生成失败：' + (err.message || err);
       }
     }
     
+    // 拉取全部评论并统计词频
     async function collectTokensFromAllComments() {
       let wcOffset = 0;
       const wcLimit = 100;
@@ -394,6 +397,7 @@
       return buildFrequencies(texts);
     }
     
+    // 简易中文友好分词：英文按词、中文用双字滑窗
     function buildFrequencies(texts) {
       const stop = new Set(['的','了','是','我','你','他','她','它','在','和','与','就','都','很','也','这','那','一个','我们','他们','因为','所以','如果','但是','而且','不是','还有','会','能','把','被','给','让','呢','嘛','吗','啊','哦','呃']);
       const freq = new Map();
@@ -406,10 +410,8 @@
       };
       for (const t of texts) {
         const s = normalize(t);
-        // 英文/拼音等：按词匹配
         const words = s.match(/\p{L}[\p{L}\p{N}_]{1,}/gu) || [];
         words.forEach(add);
-        // 中文：用双字滑窗作为近似“词”
         const zhSeqs = s.match(/[\u4e00-\u9fff]+/g) || [];
         zhSeqs.forEach(seq => {
           if (seq.length >= 2) {
@@ -419,24 +421,105 @@
       }
       const arr = Array.from(freq.entries()).map(([word, count]) => ({ word, count }));
       arr.sort((a, b) => b.count - a.count);
-      return arr.slice(0, 80); // 取 Top 80
+      return arr.slice(0, 120); // 取 Top 120
     }
     
-    function renderWordCloud(tokens) {
+    // 在 canvas 上绘制爱心形状词云
+    function renderWordCloudHeart(tokens) {
+      const canvas = wcCanvas;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.clientWidth || 900;
+      const H = canvas.clientHeight || 420;
+      canvas.width = W * window.devicePixelRatio;
+      canvas.height = H * window.devicePixelRatio;
+      ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+    
+      // 配色与大小映射
+      const palette = ['#e91e63','#f06292','#ff6b6b','#ff8e8e','#ffa6c9','#f48fb1','#ec407a','#ab47bc','#9c27b0','#ff4081'];
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
-      const scale = c => {
+      const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(14 + t * 34); // 14px ~ 48px
+        return Math.round(14 + t * 38); // 14px ~ 52px
       };
-      wcEl.innerHTML = tokens.map(t =>
-        `<span class="token" style="font-size:${scale(t.count)}px; opacity:${0.6 + Math.min(0.4, t.count / max)}">${escapeHtml(t.word)}</span>`
-      ).join('');
-      wcEl.style.display = 'block';
+    
+      // 心形隐式方程：(x^2 + y^2 - 1)^3 - x^2 y^3 <= 0，坐标域 [-1.3,1.3]
+      const heartInside = (x, y) => {
+        const a = x*x + y*y - 1;
+        return (a*a*a - x*x*y*y*y) <= 0;
+      };
+    
+      // 简单碰撞检测（格子）
+      const cell = 18; // 碰撞格子像素
+      const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
+      const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+      const occupy = (x, y, w, h) => {
+        const c0 = Math.max(0, Math.floor(x / cell)), r0 = Math.max(0, Math.floor(y / cell));
+        const c1 = Math.min(cols - 1, Math.floor((x + w) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h) / cell));
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+          if (grid[r][c]) return false;
+        }
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
+        return true;
+      };
+    
+      // 生成爱心区域内的随机点（越接近中心词越大）
+      const samplePoint = (bias = 0.5) => {
+        // 映射到 [-1.3,1.3] 区域
+        for (let k = 0; k < 800; k++) {
+          const rx = (Math.random() * 2 - 1) * 1.3;
+          const ry = (Math.random() * 2 - 1) * 1.3;
+          if (!heartInside(rx, ry)) continue;
+          // 偏向中心（让大词更容易靠中心）
+          const s = Math.random();
+          if (s < bias) {
+            const rx2 = rx * 0.7, ry2 = ry * 0.7;
+            if (heartInside(rx2, ry2)) { return { x: rx2, y: ry2 }; }
+          }
+          return { x: rx, y: ry };
+        }
+        return { x: 0, y: 0 };
+      };
+    
+      // 将归一化坐标映射到画布像素（居中）
+      const toCanvas = (nx, ny) => {
+        const m = Math.min(W, H);
+        const cx = W / 2, cy = H / 2;
+        const scale = m / 2.6; // 让心形铺满画布
+        return { x: cx + nx * scale, y: cy - ny * scale };
+      };
+    
+      // 词按大小排序后布局
+      tokens.sort((a, b) => b.count - a.count);
+      tokens.forEach((t, i) => {
+        const size = fontSize(t.count);
+        ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
+        const text = t.word;
+        const w = Math.ceil(ctx.measureText(text).width);
+        const h = Math.ceil(size * 1.2);
+    
+        // 大词更靠中心，小词更外围
+        const bias = Math.min(0.85, 0.55 + i / tokens.length * 0.3);
+        let placed = false;
+        for (let tries = 0; tries < 200 && !placed; tries++) {
+          const p = samplePoint(bias);
+          const pos = toCanvas(p.x, p.y);
+          const x = Math.round(pos.x - w / 2);
+          const y = Math.round(pos.y - h / 2);
+          if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+          if (!occupy(x, y, w, h)) continue;
+    
+          ctx.save();
+          ctx.fillStyle = palette[(i % palette.length)];
+          ctx.globalAlpha = 0.85;
+          ctx.fillText(text, x, y + h * 0.8);
+          ctx.restore();
+          placed = true;
+        }
+      });
     }
     // --- 词云逻辑结束 ---
-
-    // 不在首次加载时拉取评论，保持隐藏直到评论成功
   </script>
 </body>
 </html>
