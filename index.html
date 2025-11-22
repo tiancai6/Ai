@@ -2,26 +2,19 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>视频弹幕评论（Render + Neon）</title>
+  <title>视频弹幕评论（简化版：词云与单次输入）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Arial; margin: 40px; background:#fafafa; }
     #container { max-width: 900px; margin: 0 auto; }
+
     #playBtn { font-size: 18px; padding: 10px 20px; }
 
     #videoWrap { position: relative; margin-top: 20px; display:none; }
     #video { width: 100%; background:#000; }
-    #danmakuLayer { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
-    .dm { position:absolute; right:-20%; color:#fff; font-weight:600; text-shadow: 1px 1px 2px #000;
-          white-space:nowrap; will-change:transform, opacity; animation: dm-move linear 8s forwards; }
-    @keyframes dm-move {
-      0% { transform: translateX(0); opacity: 1; }
-      90% { opacity: 1; }
-      100% { transform: translateX(-140%); opacity: 0; }
-    }
 
-    /* 视频结束后的居中弹窗 */
-    #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:10; }
+    /* 视频结束后的居中弹窗：只显示问题与输入框 */
+    #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:10; pointer-events:auto; }
     #overlay .card {
       width: min(90%, 520px);
       background:#fff;
@@ -34,57 +27,35 @@
     #overlay input, #overlay textarea, #overlay button { font-size: 16px; }
     #overlay textarea { min-height: 120px; }
     #overlay button { margin-top: 12px; width: 100%; }
+    #overlayForm { display:block; } /* 确保弹窗表单可见 */
 
-    /* 普通表单与列表（仅隐藏底部常规表单） */
-    #commentForm { display:none; gap:12px; margin: 16px 0; }
-    input, textarea, button { font-size: 16px; }
-    input, textarea { padding: 10px; border:1px solid #ddd; border-radius:8px; flex:1; }
-    textarea { min-height: 100px; }
-    button { padding: 10px 16px; border: none; border-radius: 8px; background: #2962ff; color:#fff; cursor:pointer; }
-    button:disabled { background:#999; cursor:not-allowed; }
+    /* 状态提示（词云生成中/已生成） */
+    #status { color:#666; margin-top:12px; min-height: 20px; }
 
-    /* 弹窗覆盖层：确保可点击 */
-    #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:10; pointer-events:auto; }
-    #overlay .card {
-      width: min(90%, 520px);
-      background:#fff;
-      border-radius:12px;
-      box-shadow:0 8px 30px rgba(0,0,0,.3);
-      padding: 20px;
+    /* 词云区域（心跳.jpg 形状 + 返回按钮 + 循环 BGM） */
+    #wcWrap { display:none; position: relative; margin-top: 16px; }
+    #wordcloudCanvas {
+      display: block;
+      width: 100%;
+      max-width: 900px;
+      height: 420px;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      background: #fff;
     }
-    #overlay h3 { margin: 0 0 12px; font-size: 20px; text-align:center; }
-    #overlay .row { display:flex; gap:12px; margin-top: 12px; }
-    /* 显示弹窗表单（取消被全局隐藏的影响） */
-    #overlayForm { display:block; }
-    #overlay textarea { min-height: 120px; }
-    #overlay button { margin-top: 12px; width: 100%; }
-
-    #status { color:#666; margin-top:12px; }
-    #list .item { border-bottom:1px solid #eee; padding:12px 0; }
-    .meta { color:#666; font-size:14px; }
-    .content { white-space: pre-wrap; }
-
-    /* 点赞按钮样式 */
-    .likeBtn {
-      margin-left: 12px;
-      font-size: 14px;
-      padding: 2px 8px;
-      border: 1px solid #ddd;
-      border-radius: 14px;
+    #bgm { display: none; } /* 隐藏音频控件，提交后自动播放 */
+    .backBtn {
+      position: absolute;
+      top: 8px;
+      left: 8px;
       background: #fff;
       color: #333;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 6px 10px;
       cursor: pointer;
+      z-index: 20;
     }
-    .likeBtn[disabled] {
-      opacity: 0.6;
-      cursor: default;
-    }
-
-    /* 首次访问：隐藏评论列表与“加载更多” */
-    #list, #moreBtn { display: none; }
-    /* 词云容器与词条样式 */
-    #wordcloud { display:none; border: 1px solid #eee; border-radius: 8px; padding: 12px; background:#fff; margin-top:12px; }
-    #wordcloud .token { display:inline-block; margin:6px 8px; padding:2px 4px; border-radius:4px; background:#f5f7ff; color:#333; }
   </style>
 </head>
 <body>
@@ -93,7 +64,6 @@
 
     <div id="videoWrap">
       <video id="video" src="video.mp4" controls></video>
-      <div id="danmakuLayer"></div>
 
       <!-- 视频结束后的居中弹窗 -->
       <div id="overlay">
@@ -112,33 +82,22 @@
       </div>
     </div>
 
-    <!-- 底部常规评论表单（首次隐藏，提交第一条后显示，便于继续评论） -->
-    <form id="commentForm">
-      <input id="author" type="text" placeholder="昵称（可选）" maxlength="128">
-      <textarea id="content" placeholder="说点什么..." maxlength="2000"></textarea>
-      <button id="submitBtn" type="submit">提交</button>
-    </form>
-
-    <!-- 状态区域：去掉默认“尚未加载” -->
+    <!-- 状态提示（生成词云时显示进度） -->
     <div id="status"></div>
-    <div id="list"></div>
-    <div style="margin-top:12px;">
-      <button id="moreBtn" style="background:#555;">加载更多</button>
-    </div>
-    <!-- 爱心词云按钮与画布 -->
+
+    <!-- 词云区域：心形掩模 + 返回按钮 + 循环 BGM -->
     <div id="wcWrap">
-      <button id="wcBtn" style="background:#2962ff;">生成词云</button>
+      <button id="backBtn" class="backBtn">返回</button>
       <canvas id="wordcloudCanvas"></canvas>
+      <audio id="bgm" src="快速心跳声.mp3" loop></audio>
     </div>
-    <div id="wordcloud"></div>
   </div>
 
   <script>
-    // 变量与元素引用
+    // 基本元素
     const playBtn = document.getElementById('playBtn');
     const videoWrap = document.getElementById('videoWrap');
     const video = document.getElementById('video');
-    const danmakuLayer = document.getElementById('danmakuLayer');
 
     const overlay = document.getElementById('overlay');
     const overlayForm = document.getElementById('overlayForm');
@@ -146,35 +105,37 @@
     const overlayContentEl = document.getElementById('overlayContent');
     const overlaySubmitBtn = document.getElementById('overlaySubmit');
 
-    const formEl = document.getElementById('commentForm');
-    const authorEl = document.getElementById('author');
-    const contentEl = document.getElementById('content');
-    const submitBtn = document.getElementById('submitBtn');
-
     const statusEl = document.getElementById('status');
-    const listEl = document.getElementById('list');
-    const moreBtn = document.getElementById('moreBtn');
 
-    // 状态
+    // 词云与控制元素
+    const wcWrap = document.getElementById('wcWrap');
+    const wcCanvas = document.getElementById('wordcloudCanvas');
+    const backBtn = document.getElementById('backBtn');
+    const bgm = document.getElementById('bgm');
+
+    // thread 与“仅一次”标记
     const thread = (location.pathname.replace(/[^a-z0-9/_-]/gi, '_') || '/').toLowerCase();
-    let offset = 0, limit = 20, loading = false, done = false;
-    let dmIndexBySec = new Map();
-    let shownById = new Set();
-    let danmakuEnabled = false; // 首次不展示历史弹幕，评论成功后开启
+    const submittedKey = 'submitted:' + thread;
 
-    // 播放按钮
+    // 播放按钮：显示视频
     playBtn.addEventListener('click', () => {
       playBtn.style.display = 'none';
       videoWrap.style.display = 'block';
       video.play().catch(() => {});
     });
 
-    // 视频结束：显示居中弹窗
+    // 视频结束：只显示提问卡片
     video.addEventListener('ended', () => {
       overlay.style.display = 'flex';
+      // 如果已提交过，禁用输入（只能一次）
+      if (localStorage.getItem(submittedKey) === '1') {
+        overlayAuthorEl.disabled = true;
+        overlayContentEl.disabled = true;
+        overlaySubmitBtn.disabled = true;
+      }
     });
 
-    // 弹窗提交评论
+    // 弹窗提交评论：仅一次，成功后直接进入词云并播放 BGM
     overlayForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const author = overlayAuthorEl.value.trim();
@@ -191,16 +152,16 @@
         const data = await resp.json();
         if (!resp.ok || !data.ok) throw new Error(data.error || '提交失败');
 
-        // 展示自己刚提交的评论与弹幕
-        listEl.insertAdjacentHTML('afterbegin', renderItem(data.item));
-        overlayContentEl.value = '';
-        statusEl.textContent = '提交成功';
-        showDanmakuNow(data.item);
+        // 标记“仅一次”
+        localStorage.setItem(submittedKey, '1');
 
-        // 隐藏弹窗，展示评论与历史弹幕，并显示底部常规表单以便继续评论
+        // 进入词云：显示、生成并滚动；播放循环心跳
         overlay.style.display = 'none';
-        formEl.style.display = 'flex';
-        revealCommentsAndDanmaku();
+        wcWrap.style.display = 'block';
+        await genWordCloud(true);
+        wcCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        bgm.currentTime = 0;
+        bgm.play().catch(() => {});
       } catch (err) {
         alert('提交失败：' + (err.message || err));
       } finally {
@@ -208,178 +169,25 @@
       }
     });
 
-    // 底部常规表单，继续评论（可选，不影响首次 gating）
-    formEl.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const author = authorEl.value.trim();
-      const content = contentEl.value.trim();
-      if (!content) { alert('内容不能为空'); return; }
-      submitBtn.disabled = true;
-      try {
-        const at = Math.floor(video.currentTime || 0);
-        const resp = await fetch('/comments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ thread, author, content, at_seconds: at })
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) throw new Error(data.error || '提交失败');
-
-        listEl.insertAdjacentHTML('afterbegin', renderItem(data.item));
-        contentEl.value = '';
-        statusEl.textContent = '提交成功';
-        showDanmakuNow(data.item);
-      } catch (err) {
-        statusEl.textContent = '提交失败：' + (err.message || err);
-      } finally {
-        submitBtn.disabled = false;
-      }
+    // 返回按钮：回到问题输入卡片（保持只能一次，禁用输入）
+    backBtn.addEventListener('click', () => {
+      bgm.pause();
+      wcWrap.style.display = 'none';
+      overlay.style.display = 'flex';
+      overlayAuthorEl.disabled = true;
+      overlayContentEl.disabled = true;
+      overlaySubmitBtn.disabled = true;
     });
 
-    // 加载更多
-    moreBtn.addEventListener('click', () => {
-      if (done || loading) return;
-      loadComments();
-    });
-
-    // 拉取评论并建立弹幕索引（仅在展示后使用）
-    async function loadComments() {
-      loading = true;
-      statusEl.textContent = '正在加载评论...';
-      try {
-        const resp = await fetch(`/comments?thread=${encodeURIComponent(thread)}&limit=${limit}&offset=${offset}`);
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) throw new Error(data.error || '拉取失败');
-        if (data.items.length === 0) { done = true; moreBtn.disabled = true; statusEl.textContent = '没有更多了'; return; }
-        data.items.forEach(item => {
-          if (!document.querySelector(`.item[data-id="${item.id}"]`)) {
-            listEl.insertAdjacentHTML('beforeend', renderItem(item));
-          }
-          if (Number.isFinite(item.at_seconds)) {
-            const sec = item.at_seconds;
-            if (!dmIndexBySec.has(sec)) dmIndexBySec.set(sec, []);
-            dmIndexBySec.get(sec).push(item);
-          }
-        });
-        offset += data.items.length;
-        statusEl.textContent = `已加载 ${offset} 条`;
-      } catch (err) {
-        statusEl.textContent = '加载失败：' + (err.message || err);
-      } finally {
-        loading = false;
-      }
-    }
-
-    // 点赞事件代理
-    listEl.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.likeBtn');
-      if (!btn) return;
-
-      const itemEl = btn.closest('.item');
-      const id = Number(itemEl?.dataset?.id || 0);
-      if (!id || isLiked(id)) return;
-
-      btn.disabled = true;
-      try {
-        const resp = await fetch(`/comments/${id}/like`, { method: 'POST' });
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) throw new Error(data.error || '点赞失败');
-
-        const countEl = btn.querySelector('.likeCount');
-        if (countEl) countEl.textContent = String(data.likes_count);
-        localStorage.setItem('liked:' + id, '1');
-      } catch (err) {
-        btn.disabled = false;
-        alert('点赞失败：' + (err.message || err));
-      }
-    });
-
-    // 工具函数与渲染
-    function isLiked(id) {
-      return localStorage.getItem('liked:' + id) === '1';
-    }
-    function renderItem(item) {
-      const author = item.author ? escapeHtml(item.author) : '匿名';
-      const content = escapeHtml(item.content || '');
-      const time = formatTime(item.created_at);
-      const likedAttr = isLiked(item.id) ? 'disabled' : '';
-      return `
-        <div class="item" data-id="${item.id}">
-          <div class="meta">${author} · ${time}
-            <button class="likeBtn" ${likedAttr} title="点赞">
-              👍 <span class="likeCount">${item.likes_count || 0}</span>
-            </button>
-          </div>
-          <div class="content">${content}</div>
-        </div>
-      `;
-    }
-    function escapeHtml(str) {
-      return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
-    }
-    function formatTime(t) {
-      try { return new Date(t).toLocaleString(); } catch { return String(t); }
-    }
-
-    function showDanmakuNow(item) {
-      const y = pickY();
-      const el = document.createElement('div');
-      el.className = 'dm';
-      el.style.top = y + 'px';
-      el.textContent = item.content || '';
-      danmakuLayer.appendChild(el);
-      el.addEventListener('animationend', () => el.remove());
-    }
-    function pickY() {
-      const h = danmakuLayer.clientHeight || 300;
-      const lines = Math.max(6, Math.floor(h / 28));
-      const line = Math.floor(Math.random() * lines);
-      return Math.min(h - 24, Math.max(0, line * 24));
-    }
-
-    // 历史弹幕仅在开启后播放
-    video.addEventListener('timeupdate', () => {
-      if (!danmakuEnabled) return;
-      const sec = Math.floor(video.currentTime || 0);
-      const items = dmIndexBySec.get(sec) || [];
-      items.forEach(item => {
-        if (shownById.has(item.id)) return;
-        shownById.add(item.id);
-        showDanmakuNow(item);
-      });
-    });
-
-    // 提交评论成功后：展示评论与开启历史弹幕
-    function revealCommentsAndDanmaku() {
-      listEl.style.display = 'block';
-      moreBtn.style.display = 'inline-block';
-      danmakuEnabled = true;
-      offset = 0; done = false; dmIndexBySec.clear(); shownById.clear();
-      // 加载评论后自动生成一次词云（爱心形状）
-      loadComments().then(() => genWordCloud(true)).catch(() => {});
-    }
-
-    // 修复：移除原来误放入的 CSS（#wcWrap、#wordcloudCanvas），以下仅保留 JS 代码
-    const wcWrap = document.getElementById('wcWrap');
-    const wcBtn = document.getElementById('wcBtn');
-    const wcCanvas = document.getElementById('wordcloudCanvas');
-    
-    wcBtn.addEventListener('click', () => genWordCloud(false));
-    
-    // 生成词云入口
+    // 生成词云（心跳.jpg 掩模，统一深红色）
     async function genWordCloud(auto = false) {
-      try {
-        statusEl.textContent = '正在生成词云...';
-        const tokens = await collectTokensFromAllComments();
-        renderWordCloudHeart(tokens);
-        statusEl.textContent = '词云已生成';
-        wcCanvas.style.display = 'block';
-        if (!auto) wcCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } catch (err) {
-        statusEl.textContent = '词云生成失败：' + (err.message || err);
-      }
+      statusEl.textContent = '正在生成词云...';
+      const tokens = await collectTokensFromAllComments();
+      await renderWordCloudMask(tokens);
+      statusEl.textContent = '词云已生成';
+      if (!auto) wcCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-    
+
     // 拉取全部评论并统计词频
     async function collectTokensFromAllComments() {
       let wcOffset = 0;
@@ -396,7 +204,7 @@
       }
       return buildFrequencies(texts);
     }
-    
+
     // 简易中文友好分词：英文按词、中文用双字滑窗
     function buildFrequencies(texts) {
       const stop = new Set(['的','了','是','我','你','他','她','它','在','和','与','就','都','很','也','这','那','一个','我们','他们','因为','所以','如果','但是','而且','不是','还有','会','能','把','被','给','让','呢','嘛','吗','啊','哦','呃']);
@@ -423,103 +231,98 @@
       arr.sort((a, b) => b.count - a.count);
       return arr.slice(0, 120); // 取 Top 120
     }
-    
-    // 在 canvas 上绘制爱心形状词云
-    function renderWordCloudHeart(tokens) {
+
+    // 心形掩模渲染：从心跳.jpg 生成二值掩模并布局文本（统一深红色）
+    async function renderWordCloudMask(tokens) {
       const canvas = wcCanvas;
       const ctx = canvas.getContext('2d');
       const W = canvas.clientWidth || 900;
       const H = canvas.clientHeight || 420;
-      canvas.width = W * window.devicePixelRatio;
-      canvas.height = H * window.devicePixelRatio;
-      ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
-    
-      // 配色与大小映射
-      const palette = ['#e91e63','#f06292','#ff6b6b','#ff8e8e','#ffa6c9','#f48fb1','#ec407a','#ab47bc','#9c27b0','#ff4081'];
+
+      const img = await loadImage('心跳.jpg');
+      const off = document.createElement('canvas');
+      off.width = W; off.height = H;
+      const ictx = off.getContext('2d');
+      ictx.drawImage(img, 0, 0, W, H);
+      const { data } = ictx.getImageData(0, 0, W, H);
+
+      // 非白区域作为“形状内”（阈值可调）
+      const mask = new Uint8Array(W * H);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+          const brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          mask[y * W + x] = (a > 40 && brightness < 240) ? 1 : 0;
+        }
+      }
+      const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
+
+      // 碰撞格子避免重叠
+      const cell = 18;
+      const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
+      const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+      const occupy = (x, y, w, h) => {
+        const c0 = Math.max(0, Math.floor(x / cell)), r0 = Math.max(0, Math.floor(y / cell));
+        const c1 = Math.min(cols - 1, Math.floor((x + w) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h) / cell));
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (grid[r][c]) return false;
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
+        return true;
+      };
+
+      const deepRed = '#8B0000';
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
         return Math.round(14 + t * 38); // 14px ~ 52px
       };
-    
-      // 心形隐式方程：(x^2 + y^2 - 1)^3 - x^2 y^3 <= 0，坐标域 [-1.3,1.3]
-      const heartInside = (x, y) => {
-        const a = x*x + y*y - 1;
-        return (a*a*a - x*x*y*y*y) <= 0;
-      };
-    
-      // 简单碰撞检测（格子）
-      const cell = 18; // 碰撞格子像素
-      const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
-      const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
-      const occupy = (x, y, w, h) => {
-        const c0 = Math.max(0, Math.floor(x / cell)), r0 = Math.max(0, Math.floor(y / cell));
-        const c1 = Math.min(cols - 1, Math.floor((x + w) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h) / cell));
-        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-          if (grid[r][c]) return false;
-        }
-        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
-        return true;
-      };
-    
-      // 生成爱心区域内的随机点（越接近中心词越大）
-      const samplePoint = (bias = 0.5) => {
-        // 映射到 [-1.3,1.3] 区域
+
+      function sampleInside() {
         for (let k = 0; k < 800; k++) {
-          const rx = (Math.random() * 2 - 1) * 1.3;
-          const ry = (Math.random() * 2 - 1) * 1.3;
-          if (!heartInside(rx, ry)) continue;
-          // 偏向中心（让大词更容易靠中心）
-          const s = Math.random();
-          if (s < bias) {
-            const rx2 = rx * 0.7, ry2 = ry * 0.7;
-            if (heartInside(rx2, ry2)) { return { x: rx2, y: ry2 }; }
-          }
-          return { x: rx, y: ry };
+          const x = Math.floor(Math.random() * W);
+          const y = Math.floor(Math.random() * H);
+          if (inside(x, y)) return { x, y };
         }
-        return { x: 0, y: 0 };
-      };
-    
-      // 将归一化坐标映射到画布像素（居中）
-      const toCanvas = (nx, ny) => {
-        const m = Math.min(W, H);
-        const cx = W / 2, cy = H / 2;
-        const scale = m / 2.6; // 让心形铺满画布
-        return { x: cx + nx * scale, y: cy - ny * scale };
-      };
-    
-      // 词按大小排序后布局
+        return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
+      }
+
       tokens.sort((a, b) => b.count - a.count);
-      tokens.forEach((t, i) => {
+      tokens.forEach((t) => {
         const size = fontSize(t.count);
         ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
         const text = t.word;
         const w = Math.ceil(ctx.measureText(text).width);
         const h = Math.ceil(size * 1.2);
-    
-        // 大词更靠中心，小词更外围
-        const bias = Math.min(0.85, 0.55 + i / tokens.length * 0.3);
         let placed = false;
-        for (let tries = 0; tries < 200 && !placed; tries++) {
-          const p = samplePoint(bias);
-          const pos = toCanvas(p.x, p.y);
-          const x = Math.round(pos.x - w / 2);
-          const y = Math.round(pos.y - h / 2);
+        for (let tries = 0; tries < 250 && !placed; tries++) {
+          const p = sampleInside();
+          const x = Math.round(p.x - w / 2);
+          const y = Math.round(p.y - h / 2);
           if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+          // 检查中心与四角在掩模内，避免出界
+          if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
           if (!occupy(x, y, w, h)) continue;
-    
-          ctx.save();
-          ctx.fillStyle = palette[(i % palette.length)];
-          ctx.globalAlpha = 0.85;
+          ctx.fillStyle = deepRed;
           ctx.fillText(text, x, y + h * 0.8);
-          ctx.restore();
           placed = true;
         }
       });
     }
-    // --- 词云逻辑结束 ---
+
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
   </script>
 </body>
 </html>
