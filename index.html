@@ -2,154 +2,170 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>视频弹幕评论（简化版：词云与单次输入）</title>
+  <title>视频 · 单次评论 · 心形词云</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Arial; margin: 40px; background:#fafafa; }
-    #container { max-width: 900px; margin: 0 auto; }
+    /* 基础布局 */
+    html, body { height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Arial;
+      margin: 0;
+      background: #fafafa;
+      color: #263238;
+    }
+    #container { max-width: 960px; margin: 0 auto; padding: 24px; }
 
-    #playBtn { font-size: 18px; padding: 10px 20px; }
+    /* 视频容器：默认显示 */
+    #videoWrap { position: relative; margin-top: 0; display: block; }
+    #video { width: 100%; background: #000; border-radius: 12px; }
 
-    /* 让视频容器默认显示 */
-    #videoWrap { position: relative; margin-top: 0; display:block; }
-
-    /* 优化弹窗卡片与输入框视觉 */
-    #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:10; }
+    /* 视频结束后的居中弹窗：卡片与输入框视觉统一 */
+    #overlay {
+      position: absolute; inset: 0;
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 10;
+      pointer-events: auto;
+    }
     #overlay .card {
       width: min(92%, 560px);
-      background: linear-gradient(180deg, #fff, #f8fbff);
-      border-radius:16px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      border-radius: 16px;
       box-shadow: 0 20px 60px rgba(20,30,50,.25);
       padding: 22px 22px 18px;
-      border: 1px solid rgba(33, 150, 243, 0.12);
+      border: 1px solid rgba(33,150,243,.12);
     }
     #overlay h3 {
       margin: 4px 0 14px;
       font-size: 22px;
-      text-align:center;
+      text-align: center;
       letter-spacing: .5px;
       color: #263238;
     }
-    #overlay .row { display:flex; gap:12px; margin-top: 12px; }
-    #overlay input, #overlay textarea, #overlay button { font-size: 16px; }
-    #overlay input, #overlay textarea {
+    #overlayForm { display: block; }
+    #overlay .row { margin-top: 12px; }
+    /* 输入框与按钮统一风格 */
+    .ui-input, .ui-textarea {
+      width: 100%;
+      box-sizing: border-box;
       padding: 12px 14px;
-      border:1px solid #dfe7f1;
+      border: 1px solid #dfe7f1;
       border-radius: 12px;
       background: #fff;
       color: #263238;
       box-shadow: 0 1px 0 rgba(0,0,0,.02) inset;
       transition: border-color .2s, box-shadow .2s;
+      font-size: 16px;
     }
-    #overlay input::placeholder, #overlay textarea::placeholder { color:#8ea6b5; }
-    #overlay input:focus, #overlay textarea:focus {
+    .ui-input::placeholder, .ui-textarea::placeholder { color: #8ea6b5; }
+    .ui-input:focus, .ui-textarea:focus {
       outline: none;
       border-color: #49a2ff;
       box-shadow: 0 0 0 3px rgba(73,162,255,.15);
     }
-    #overlay textarea { min-height: 140px; line-height: 1.6; }
-    #overlay button {
-      margin-top: 14px; width: 100%;
-      padding: 12px 16px; border: none; border-radius: 12px;
-      background: linear-gradient(90deg, #2962ff, #3f79ff);
-      color:#fff; cursor:pointer; font-weight: 600; letter-spacing: .3px;
-      box-shadow: 0 6px 16px rgba(41,98,255,.28);
-    }
-    #overlay button:disabled { background:#9db7ff; cursor:not-allowed; box-shadow:none; }
-    #overlayForm { display:block; }
+    .ui-textarea { min-height: 140px; line-height: 1.6; resize: vertical; }
 
-    /* 词云全屏界面：只显示词云和背景音乐 */
+    .ui-button {
+      margin-top: 14px; width: 100%;
+      padding: 12px 16px;
+      border: none; border-radius: 12px;
+      background: linear-gradient(90deg, #2962ff, #3f79ff);
+      color: #fff; cursor: pointer; font-weight: 600; letter-spacing: .3px;
+      box-shadow: 0 6px 16px rgba(41,98,255,.28);
+      font-size: 16px;
+    }
+    .ui-button:disabled { background: #9db7ff; cursor: not-allowed; box-shadow: none; }
+
+    /* 全屏词云界面：只有词云与背景音乐 */
     #wcPage {
       position: fixed; inset: 0; display: none;
       background: #fff;
-      /* 如果你希望有淡淡的背景，也可以用渐变或纹理 */
-      /* background: radial-gradient(1200px at 50% 20%, #fff 0, #ffeef1 50%, #fff 100%); */
       align-items: center; justify-content: center; flex-direction: column;
       gap: 16px;
     }
-    #wcPage .canvasWrap {
-      width: min(92vw, 900px);
-    }
+    #wcPage .canvasWrap { width: min(92vw, 900px); }
     #wordcloudCanvas {
-      display:block; width: 100%; height: 460px;
+      display: block; width: 100%; height: 460px;
       border: 1px solid #eee; border-radius: 12px; background: #fff;
       box-shadow: 0 12px 30px rgba(0,0,0,.06);
     }
-    #bgm { display:none; } /* 隐藏音频控件，提交后自动播放 */
-    .backBtn {
-      position: absolute;
-      top: 8px;
-      left: 8px;
+    #bgm { display: none; }
+
+    /* 词云界面返回按钮（仅词云界面存在） */
+    #wcBack.backBtn {
+      position: fixed;
+      top: 16px;
+      left: 16px;
       background: #fff;
       color: #333;
       border: 1px solid #ddd;
-      border-radius: 6px;
-      padding: 6px 10px;
+      border-radius: 8px;
+      padding: 8px 12px;
       cursor: pointer;
-      z-index: 20;
+      z-index: 1000;
     }
   </style>
 </head>
 <body>
   <div id="container">
-    <!-- 移除播放按钮；视频默认可见并尝试自动播放 -->
     <div id="videoWrap">
+      <!-- 页面打开即尝试自动播放；muted+playsinline 提升自动播放成功率 -->
       <video id="video" src="video.mp4" autoplay muted playsinline preload="auto" controls></video>
 
-      <!-- 视频结束后的居中弹窗 -->
+      <!-- 视频结束弹窗（输入框与卡片匹配） -->
       <div id="overlay">
         <div class="card">
           <h3>你觉得爱是什么</h3>
           <form id="overlayForm">
             <div class="row">
-              <input id="overlayAuthor" type="text" placeholder="昵称（可选）" maxlength="128">
+              <input id="overlayAuthor" class="ui-input" type="text" placeholder="昵称（可选）" maxlength="128">
             </div>
             <div class="row">
-              <textarea id="overlayContent" placeholder="写下你的想法..." maxlength="2000"></textarea>
+              <textarea id="overlayContent" class="ui-textarea" placeholder="写下你的想法..." maxlength="2000"></textarea>
             </div>
-            <button id="overlaySubmit" type="submit">提交</button>
+            <button id="overlaySubmit" class="ui-button" type="submit">提交</button>
           </form>
         </div>
       </div>
     </div>
-
-    <!-- 状态提示（生成词云时显示进度） -->
-    <div id="status"></div>
-
-    <!-- 词云区域：心形掩模 + 返回按钮 + 循环 BGM -->
-    <div id="wcWrap">
-      <button id="backBtn" class="backBtn">返回</button>
-      <canvas id="wordcloudCanvas"></canvas>
-      <audio id="bgm" src="快速心跳声.mp3" loop></audio>
-    </div>
   </div>
 
+  <!-- 全屏词云界面：只显示词云和背景音乐 -->
+  <section id="wcPage">
+    <button id="wcBack" class="backBtn">返回</button>
+    <div class="canvasWrap">
+      <canvas id="wordcloudCanvas"></canvas>
+    </div>
+    <audio id="bgm" src="快速心跳声.mp3" loop></audio>
+  </section>
+
   <script>
-    // 基本元素
-    const playBtn = document.getElementById('playBtn');
+    // 基础元素
     const videoWrap = document.getElementById('videoWrap');
     const video = document.getElementById('video');
+
     const overlay = document.getElementById('overlay');
     const overlayForm = document.getElementById('overlayForm');
     const overlayAuthorEl = document.getElementById('overlayAuthor');
     const overlayContentEl = document.getElementById('overlayContent');
     const overlaySubmitBtn = document.getElementById('overlaySubmit');
-    // 词云全屏界面
+
+    // 词云界面
     const wcPage = document.getElementById('wcPage');
     const wcCanvas = document.getElementById('wordcloudCanvas');
     const bgm = document.getElementById('bgm');
+    const wcBack = document.getElementById('wcBack');
 
+    // 线程与“仅一次”标记
     const thread = (location.pathname.replace(/[^a-z0-9/_-]/gi, '_') || '/').toLowerCase();
     const submittedKey = 'submitted:' + thread;
 
-    // DOMContentLoaded 后再尝试播放（兼容性更好）
+    // 页面加载后再尝试播放（进一步提升自动播放成功率）
     document.addEventListener('DOMContentLoaded', () => {
-      video.play().catch(() => {
-        // 自动播放可能被限制（特别是未静音时），我们已加 muted 提升成功率
-      });
+      video.play().catch(() => {});
     });
 
-    // 视频结束：只显示提问卡片
+    // 视频结束：显示弹窗（只能一次）
     video.addEventListener('ended', () => {
       overlay.style.display = 'flex';
       if (localStorage.getItem(submittedKey) === '1') {
@@ -159,7 +175,7 @@
       }
     });
 
-    // 提交评论：只允许一次；成功后进入“词云全屏界面”
+    // 弹窗提交：成功后进入“全屏词云界面”
     overlayForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const author = overlayAuthorEl.value.trim();
@@ -179,7 +195,7 @@
         // 标记仅一次
         localStorage.setItem(submittedKey, '1');
 
-        // 切换到“全屏词云界面”（隐藏其他界面）
+        // 切换到词云全屏界面
         overlay.style.display = 'none';
         document.getElementById('container').style.display = 'none';
         wcPage.style.display = 'flex';
@@ -194,14 +210,25 @@
       }
     });
 
-    // 生成词云（用心跳.jpg 作为形状掩模，统一深红色）
+    // 词云界面“返回”：暂停 BGM，隐藏词云，回到视频界面
+    wcBack.addEventListener('click', () => {
+      try { bgm.pause(); } catch {}
+      wcPage.style.display = 'none';
+      const container = document.getElementById('container');
+      container.style.display = 'block';
+      videoWrap.style.display = 'block';
+      overlay.style.display = 'none'; // 保持只能一次，不再显示弹窗
+      // 如果需要返回后继续播放视频，可取消注释：
+      // video.play().catch(() => {});
+    });
+
+    // 生成词云（优先使用透明 PNG；不存在则回退到 JPG；仅在红色心形内排布）
     async function genWordCloud(auto = false) {
       const tokens = await collectTokensFromAllComments();
       await renderWordCloudMask(tokens);
-      // 全屏界面不需要滚动，仅显示
     }
 
-    // 拉取全部评论并统计词频（与现有后端接口兼容）
+    // 拉取全部评论并统计词频
     async function collectTokensFromAllComments() {
       let wcOffset = 0;
       const wcLimit = 100;
@@ -218,6 +245,7 @@
       return buildFrequencies(texts);
     }
 
+    // 简易中文友好分词：英文按词、中文双字滑窗
     function buildFrequencies(texts) {
       const stop = new Set(['的','了','是','我','你','他','她','它','在','和','与','就','都','很','也','这','那','一个','我们','他们','因为','所以','如果','但是','而且','不是','还有','会','能','把','被','给','让','呢','嘛','吗','啊','哦','呃']);
       const freq = new Map();
@@ -237,8 +265,21 @@
       return arr.slice(0, 120);
     }
 
-    // 用图片掩模渲染词云（心跳.jpg）
-    // 心形掩模渲染：使用红色识别（仅将红色像素视为形状内）
+    // 加载图片（PNG 优先，JPG 作为回退）
+    async function loadMaskImage() {
+      try { return await loadImage('心跳.png'); } catch {}
+      return await loadImage('心跳.jpg');
+    }
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
+
+    // 心形掩模渲染：PNG 透明背景或 JPG 的红色识别
     async function renderWordCloudMask(tokens) {
       const canvas = wcCanvas;
       const ctx = canvas.getContext('2d');
@@ -251,21 +292,20 @@
       canvas.style.height = H + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
-  
-      const img = await loadImage('心跳.jpg');
+
+      const img = await loadMaskImage();
       const off = document.createElement('canvas');
       off.width = W; off.height = H;
       const ictx = off.getContext('2d');
       ictx.drawImage(img, 0, 0, W, H);
       const { data } = ictx.getImageData(0, 0, W, H);
-  
-      // 仅识别红色区域为“形状内”
-      let mask = makeRedMask(data, W, H);
-      // 可选：做一次闭运算填平细小空洞（描边导致的小黑缝）
-      mask = closeMask(mask, W, H, 1);
-  
+
+      // 优先使用透明背景作为内外判定；否则使用红色识别
+      let mask = makeAlphaOrRedMask(data, W, H);
+      mask = closeMask(mask, W, H, 2); // 适度闭运算填平细小缝隙
+
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
-  
+
       // 碰撞格子避免重叠
       const cell = 18;
       const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
@@ -277,15 +317,15 @@
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
         return true;
       };
-  
+
       const deepRed = '#8B0000';
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(14 + t * 38);
+        return Math.round(14 + t * 38); // 14~52
       };
-  
+
       function sampleInside() {
         for (let k = 0; k < 800; k++) {
           const x = Math.floor(Math.random() * W);
@@ -294,7 +334,7 @@
         }
         return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
       }
-  
+
       tokens.sort((a, b) => b.count - a.count);
       tokens.forEach((t) => {
         const size = fontSize(t.count);
@@ -308,7 +348,6 @@
           const x = Math.round(p.x - w / 2);
           const y = Math.round(p.y - h / 2);
           if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-          // 检查中心与四角在掩模内，避免出界
           if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
           if (!occupy(x, y, w, h)) continue;
           ctx.fillStyle = deepRed;
@@ -318,24 +357,36 @@
       });
     }
 
-    // 仅把“红色像素”视为形状内；阈值可根据素材微调
-    function makeRedMask(data, W, H) {
+    // 透明优先/红色回退的掩模
+    function makeAlphaOrRedMask(data, W, H) {
+      // 检测是否存在显著透明：如果大面积透明则直接用 alpha 作为外部
+      let alphaZeroCount = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] < 10) alphaZeroCount++;
+      const hasTransparent = alphaZeroCount > (data.length / 4) * 0.05;
+
       const mask = new Uint8Array(W * H);
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const i = (y * W + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-          // 红度判定：r 足够高，且显著高于 g/b；同时不透明
-          const redness = r - Math.max(g, b);
-          const isRed = r >= 150 && redness >= 50 && g <= 120 && b <= 120;
-          mask[y * W + x] = (a >= 40 && isRed) ? 1 : 0;
+          let inside = false;
+          if (hasTransparent) {
+            // 透明背景 PNG：alpha>=40 视为形状内
+            inside = a >= 40;
+          } else {
+            // JPG（黑底红心）：仅识别红色像素为形状内
+            const redness = r - Math.max(g, b);
+            const isRed = (a >= 10 && r >= 150 && redness >= 50 && g <= 140 && b <= 140);
+            inside = isRed;
+          }
+          mask[y * W + x] = inside ? 1 : 0;
         }
       }
       return mask;
     }
-  
-    // 形态学闭运算：膨胀后腐蚀，填平小孔洞（半径 1~2 即可）
-    function closeMask(mask, W, H, radius = 1) {
+
+    // 形态学闭运算：膨胀后腐蚀
+    function closeMask(mask, W, H, radius = 2) {
       return erode(dilate(mask, W, H, radius), W, H, radius);
     }
     function dilate(mask, W, H, radius) {
@@ -346,9 +397,7 @@
           for (let dy = -radius; dy <= radius && !v; dy++) {
             for (let dx = -radius; dx <= radius; dx++) {
               const yy = y + dy, xx = x + dx;
-              if (yy >= 0 && yy < H && xx >= 0 && xx < W) {
-                if (mask[yy * W + xx]) { v = 1; break; }
-              }
+              if (yy >= 0 && yy < H && xx >= 0 && xx < W) { if (mask[yy * W + xx]) { v = 1; break; } }
             }
           }
           out[y * W + x] = v;
@@ -372,23 +421,6 @@
       }
       return out;
     }
-
-    function loadImage(src) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.src = src;
-      });
-    }
   </script>
 </body>
-
-<!-- 词云全屏界面：只有词云和背景音乐 -->
-<section id="wcPage">
-  <div class="canvasWrap">
-    <canvas id="wordcloudCanvas"></canvas>
-  </div>
-  <audio id="bgm" src="快速心跳声.mp3" loop></audio>
-</section>
 </html>
