@@ -318,7 +318,8 @@
       const { data } = ictx.getImageData(0, 0, W, H);
 
       let mask = makeAlphaOrRedMask(data, W, H);
-      mask = closeMask(mask, W, H, 2);
+      // 半径从 2 -> 3，填平小缝、让边界更连贯
+      mask = closeMask(mask, W, H, 3);
 
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
 
@@ -422,33 +423,22 @@
         if (fillRounds >= 6) break;
       }
 
-      /* 在所有文字绘制完成后，叠加心形轮廓线（更亮红、厚度3、柔和光晕） */
+      // 在所有文字绘制完成后，叠加心形轮廓线（更亮红、厚度3、柔和光晕）
       drawMaskOutline(mask, W, H, ctx, '#FF4545', 3);
     }
 
     // 透明优先/红色回退的掩模
     function makeAlphaOrRedMask(data, W, H) {
-      // 检测是否存在显著透明：如果大面积透明则直接用 alpha 作为外部
-      let alphaZeroCount = 0;
-      for (let i = 3; i < data.length; i += 4) if (data[i] < 10) alphaZeroCount++;
-      const hasTransparent = alphaZeroCount > (data.length / 4) * 0.05;
-
+      // 仅识别“鲜红”像素作为心形内部，避免透明度误判为矩形
       const mask = new Uint8Array(W * H);
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const i = (y * W + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-          let inside = false;
-          if (hasTransparent) {
-            // 透明背景 PNG：alpha>=40 视为形状内
-            inside = a >= 40;
-          } else {
-            // JPG（黑底红心）：仅识别红色像素为形状内
-            const redness = r - Math.max(g, b);
-            const isRed = (a >= 10 && r >= 150 && redness >= 50 && g <= 140 && b <= 140);
-            inside = isRed;
-          }
-          mask[y * W + x] = inside ? 1 : 0;
+          const redness = r - Math.max(g, b);
+          // 更严格的红色阈值，适配你的素材：高饱和红 + 低G/B
+          const isRed = (a >= 10 && r >= 170 && redness >= 60 && g <= 120 && b <= 120);
+          mask[y * W + x] = isRed ? 1 : 0;
         }
       }
       return mask;
