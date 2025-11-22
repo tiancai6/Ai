@@ -79,21 +79,23 @@
     /* 全屏词云界面：只有词云与背景音乐 */
     #wcPage {
     position: fixed; inset: 0; display: none;
-    background: #000;
+    background: #000; /* 全屏黑色 */
     align-items: center; justify-content: center; flex-direction: column;
     gap: 16px;
     }
+    /* 画布容器铺满视口 */
     #wcPage .canvasWrap {
       width: 100vw;
       height: 100vh;
     }
+    /* 画布跟随容器全屏，不再限制为固定高度 */
     #wordcloudCanvas {
       display: block;
       width: 100%;
       height: 100%;
       border: none;
       border-radius: 0;
-      background: #000;
+      background: #000; /* 画布黑底，心形外区域纯黑 */
       box-shadow: none;
     }
     #bgm { display: none; }
@@ -218,7 +220,7 @@
       container.style.display = 'block';
       videoWrap.style.display = 'block';
       overlay.style.display = 'none'; // 保持只能一次，不再显示弹窗
-      // 如果需要返回后继续播放视频，可取消注释：
+      // 如需返回后继续播放视频，可取消注释：
       // video.play().catch(() => {});
     });
 
@@ -278,36 +280,35 @@
         img.src = src;
       });
     }
-    
-    // 心形掩模渲染：PNG 透明背景或 JPG 的红色识别
+
+    // 心形掩模渲染：PNG 透明背景或 JPG 的红色识别（全屏自适应，等比缩放居中）
     async function renderWordCloudMask(tokens) {
       const canvas = wcCanvas;
       const ctx = canvas.getContext('2d');
+
       // 使用视口尺寸，不再固定宽高
       const W = Math.round(window.innerWidth);
       const H = Math.round(window.innerHeight);
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
-      // 不再给 canvas.style 设置固定像素值，保持 CSS 100% 自适应
+      // 样式宽高由 CSS 控制为 100%，此处仅设置像素尺寸
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       /* 黑色背景 */
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
 
-      /* 生成心形掩模（透明 PNG 优先，否则对 JPG 做红色识别） */
+      /* 生成心形掩模（透明 PNG 优先，否则对 JPG 做红色识别），等比缩放居中绘制 */
       const img = await loadMaskImage();
       const off = document.createElement('canvas');
       off.width = W; off.height = H;
       const ictx = off.getContext('2d');
 
-
-      // 清空后绘制（字母盒居中，等比缩放）
       ictx.clearRect(0, 0, W, H);
       const iw = img.naturalWidth || img.width;
       const ih = img.naturalHeight || img.height;
-      const scale = Math.min(W / iw, H / ih) * 0.9; // 留10%边距
+      const scale = Math.min(W / iw, H / ih) * 0.9; /* 留 10% 边距 */
       const sw = Math.round(iw * scale);
       const sh = Math.round(ih * scale);
       const ox = Math.floor((W - sw) / 2);
@@ -338,18 +339,19 @@
       }
 
       const occupy = (x, y, w, h) => {
-      const c0 = Math.max(0, Math.floor(x / cell)), r0 = Math.max(0, Math.floor(y / cell));
-      const c1 = Math.min(cols - 1, Math.floor((x + w) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h) / cell));
-      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (grid[r][c]) return false;
-      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
-      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) covered[r][c] = 1;
-      return true;
-    };
-    const coverageRatio = () => {
-      let coveredCells = 0;
-      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (covered[r][c]) coveredCells++;
-      return shapeCells ? coveredCells / shapeCells : 0;
-    };
+        const c0 = Math.max(0, Math.floor(x / cell)), r0 = Math.max(0, Math.floor(y / cell));
+        const c1 = Math.min(cols - 1, Math.floor((x + w) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h) / cell));
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (grid[r][c]) return false;
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
+        // 标记覆盖率
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) covered[r][c] = 1;
+        return true;
+      };
+      const coverageRatio = () => {
+        let coveredCells = 0;
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (covered[r][c]) coveredCells++;
+        return shapeCells ? coveredCells / shapeCells : 0;
+      };
 
       /* 字体鲜红色，增大字号范围 */
       const brightRed = '#FF2B2B';
@@ -357,9 +359,8 @@
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(18 + t * 50);
+        return Math.round(18 + t * 50); /* 18px ~ 68px 更大 */
       };
-
 
       function sampleInside() {
         for (let k = 0; k < 800; k++) {
@@ -370,9 +371,9 @@
         return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
       }
 
-      /* 第一阶段：按词频从大到小布局（偏向中心） */
+      /* 第一阶段：按词频从大到小布局 */
       tokens.sort((a, b) => b.count - a.count);
-      tokens.forEach((t, i) => {
+      tokens.forEach((t) => {
         const size = fontSize(t.count);
         ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
         const text = t.word;
@@ -418,9 +419,11 @@
           }
         }
         fillRounds++;
-        /* 防止无限循环：若已经很难再放下，跳出 */
         if (fillRounds >= 6) break;
       }
+
+      /* 在所有文字绘制完成后，叠加心形轮廓线（更亮红、厚度3、柔和光晕） */
+      drawMaskOutline(mask, W, H, ctx, '#FF4545', 3);
     }
 
     // 透明优先/红色回退的掩模
@@ -487,6 +490,42 @@
       }
       return out;
     }
+
+    // 基于掩模绘制心形轮廓线：检测内外边界并按行合并画段（厚度3 + 光晕）
+    function drawMaskOutline(mask, W, H, ctx, color = '#FF4545', thickness = 3) {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 6;
+
+      for (let y = 1; y < H - 1; y++) {
+        let runStart = -1;
+        for (let x = 1; x < W - 1; x++) {
+          const i = y * W + x;
+          if (mask[i] === 1) {
+            const isEdge =
+              mask[i - 1] === 0 || mask[i + 1] === 0 ||
+              mask[i - W] === 0 || mask[i + W] === 0 ||
+              mask[i - W - 1] === 0 || mask[i - W + 1] === 0 ||
+              mask[i + W - 1] === 0 || mask[i + W + 1] === 0;
+
+            if (isEdge && runStart < 0) runStart = x;
+            if (!isEdge && runStart >= 0) {
+              const len = x - runStart;
+              ctx.fillRect(runStart - thickness / 2, y - thickness / 2, len + thickness, thickness);
+              runStart = -1;
+            }
+          } else if (runStart >= 0) {
+            const len = x - runStart;
+            ctx.fillRect(runStart - thickness / 2, y - thickness / 2, len + thickness, thickness);
+            runStart = -1;
+          }
+        }
+        if (runStart >= 0) {
+          const len = (W - 1) - runStart;
+          ctx.fillRect(runStart - thickness / 2, y - thickness / 2, len + thickness, thickness);
+        }
+      }
+      ctx.restore();
+    }
   </script>
-</body>
-</html>
