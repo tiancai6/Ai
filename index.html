@@ -95,7 +95,7 @@
       height: 100%;
       border: none;
       border-radius: 0;
-      background: #000; /* 画布黑底，心形外区域纯黑 */
+      background: #000; /* 画布黑底，形状外区域纯黑 */
       box-shadow: none;
     }
     #bgm { display: none; }
@@ -125,7 +125,7 @@
             <div class="row">
               <textarea id="overlayContent" class="ui-textarea" placeholder="写下你的想法..." maxlength="2000"></textarea>
             </div>
-            <button id="overlaySubmit" class="ui-button" type="submit">提交</button>
+              <button id="overlaySubmit" class="ui-button" type="submit">提交</button>
           </form>
         </div>
       </div>
@@ -224,7 +224,7 @@
       // video.play().catch(() => {});
     });
 
-    // 生成词云（优先使用透明 PNG；不存在则回退到 JPG；仅在红色心形内排布）
+    // 生成词云（仅在“心跳.png”黑色区域内排布；白色保留为缝隙）
     async function genWordCloud(auto = false) {
       const tokens = await collectTokensFromAllComments();
       await renderWordCloudMask(tokens);
@@ -267,10 +267,9 @@
       return arr.slice(0, 120);
     }
 
-    // 加载图片（PNG 优先，JPG 作为回退）
+    // 加载图片（优先心跳.png）
     async function loadMaskImage() {
-      try { return await loadImage('心跳.png'); } catch {}
-      return await loadImage('心跳.jpg');
+      return await loadImage('心跳.png');
     }
     function loadImage(src) {
       return new Promise((resolve, reject) => {
@@ -281,7 +280,7 @@
       });
     }
 
-    // 心形掩模渲染：PNG 透明背景或 JPG 的红色识别（全屏自适应，等比缩放居中）
+    // 心形掩模渲染：只把“黑色像素”视为形状内部，白色视为缝隙保留
     async function renderWordCloudMask(tokens) {
       const canvas = wcCanvas;
       const ctx = canvas.getContext('2d');
@@ -299,7 +298,7 @@
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
 
-      /* 生成心形掩模（透明 PNG 优先，否则对 JPG 做红色识别），等比缩放居中绘制 */
+      /* 按比例缩放居中绘制素材（避免拉伸） */
       const img = await loadMaskImage();
       const off = document.createElement('canvas');
       off.width = W; off.height = H;
@@ -308,7 +307,7 @@
       ictx.clearRect(0, 0, W, H);
       const iw = img.naturalWidth || img.width;
       const ih = img.naturalHeight || img.height;
-      const scale = Math.min(W / iw, H / ih) * 0.9; /* 留 10% 边距 */
+      const scale = Math.min(W / iw, H / ih) * 0.90; /* 留 10% 边距 */
       const sw = Math.round(iw * scale);
       const sh = Math.round(ih * scale);
       const ox = Math.floor((W - sw) / 2);
@@ -317,14 +316,13 @@
 
       const { data } = ictx.getImageData(0, 0, W, H);
 
-      let mask = makeAlphaOrRedMask(data, W, H);
-      // 半径从 2 -> 3，填平小缝、让边界更连贯
-      mask = closeMask(mask, W, H, 3);
+      // 仅黑色为内部；白色与透明作为缝隙/外部
+      let mask = makeBlackMask(data, W, H);
 
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
 
-      /* 碰撞格子避免重叠 + 覆盖率统计（尽量填满形状） */
-      const cell = 16; /* 略小格子，提升可填充细缝能力 */
+      /* 碰撞格子避免重叠 + 覆盖率统计（更紧凑） */
+      const cell = 12; /* 较小格子，提升贴合密度 */
       const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
       const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
       const covered = Array.from({ length: rows }, () => Array(cols).fill(0));
@@ -372,15 +370,14 @@
         return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
       }
 
-      /* 第一阶段：按词频从大到小布局 */
+      /* 第一阶段：按词频从大到小布局（更紧凑的垂直占位与基线） */
       tokens.sort((a, b) => b.count - a.count);
       tokens.forEach((t) => {
         const size = fontSize(t.count);
         ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
         const text = t.word;
         const w = Math.ceil(ctx.measureText(text).width);
-        const h = Math.ceil(size * 1.2);
-
+        const h = Math.ceil(size * 1.08); /* 从 1.2 降到 1.08，增密 */
         let placed = false;
         for (let tries = 0; tries < 220 && !placed; tries++) {
           const p = sampleInside();
@@ -390,24 +387,24 @@
           if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
           if (!occupy(x, y, w, h)) continue;
           ctx.fillStyle = brightRed;
-          ctx.fillText(text, x, y + h * 0.8);
+          ctx.fillText(text, x, y + h * 0.82); /* baseline 微调，减少上下留白 */
           placed = true;
         }
       });
 
-      /* 第二阶段：重复高频词并用小字号填缝，尽量提高覆盖率 */
-      const target = 0.92; /* 目标覆盖率，尽量填满 */
+      /* 第二阶段：重复高频词并用小字号填缝，尽量提高覆盖率（保留白色缝隙） */
+      const target = 0.92; /* 目标覆盖率，尽量填满黑色区域 */
       const topWords = tokens.slice(0, Math.min(12, tokens.length)).map(t => t.word);
       let fillRounds = 0;
-      while (coverageRatio() < target && fillRounds < 6) {
+      while (coverageRatio() < target && fillRounds < 8) {
         for (let k = 0; k < topWords.length; k++) {
           const text = topWords[k];
-          const size = Math.max(14, 20 - fillRounds * 2); /* 逐步减小以填缝（不低于14） */
+          const size = Math.max(12, 20 - fillRounds * 2); /* 最小字号更小以填缝 */
           ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
           const w = Math.ceil(ctx.measureText(text).width);
-          const h = Math.ceil(size * 1.2);
+          const h = Math.ceil(size * 1.08);
           let placed = false;
-          for (let tries = 0; tries < 180 && !placed; tries++) {
+          for (let tries = 0; tries < 200 && !placed; tries++) {
             const p = sampleInside();
             const x = Math.round(p.x - w / 2);
             const y = Math.round(p.y - h / 2);
@@ -415,107 +412,32 @@
             if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
             if (!occupy(x, y, w, h)) continue;
             ctx.fillStyle = brightRed;
-            ctx.fillText(text, x, y + h * 0.8);
+            ctx.fillText(text, x, y + h * 0.82);
             placed = true;
           }
         }
         fillRounds++;
-        if (fillRounds >= 6) break;
+        if (fillRounds >= 8) break;
       }
 
-      // 在所有文字绘制完成后，叠加心形轮廓线（更亮红、厚度3、柔和光晕）
-      drawMaskOutline(mask, W, H, ctx, '#FF4545', 3);
+      /* 按你的要求：不再绘制边框线与光晕 */
+      // 不叠加轮廓，白色区域作为缝隙保留
     }
 
-    // 透明优先/红色回退的掩模
-    function makeAlphaOrRedMask(data, W, H) {
-      // 仅识别“鲜红”像素作为心形内部，避免透明度误判为矩形
+    // 仅黑色为形状内部的掩模（白色与透明为外部/缝隙）
+    function makeBlackMask(data, W, H) {
       const mask = new Uint8Array(W * H);
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const i = (y * W + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-          const redness = r - Math.max(g, b);
-          // 更严格的红色阈值，适配你的素材：高饱和红 + 低G/B
-          const isRed = (a >= 10 && r >= 170 && redness >= 60 && g <= 120 && b <= 120);
-          mask[y * W + x] = isRed ? 1 : 0;
+          // ITU-R BT.709 加权的亮度估计
+          const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          // 透明或偏亮（白色/灰白）都视为外部；只保留深黑
+          const isInside = (a >= 20) && (Y <= 60);
+          mask[y * W + x] = isInside ? 1 : 0;
         }
       }
       return mask;
-    }
-
-    // 形态学闭运算：膨胀后腐蚀
-    function closeMask(mask, W, H, radius = 2) {
-      return erode(dilate(mask, W, H, radius), W, H, radius);
-    }
-    function dilate(mask, W, H, radius) {
-      const out = new Uint8Array(mask.length);
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          let v = 0;
-          for (let dy = -radius; dy <= radius && !v; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-              const yy = y + dy, xx = x + dx;
-              if (yy >= 0 && yy < H && xx >= 0 && xx < W) { if (mask[yy * W + xx]) { v = 1; break; } }
-            }
-          }
-          out[y * W + x] = v;
-        }
-      }
-      return out;
-    }
-    function erode(mask, W, H, radius) {
-      const out = new Uint8Array(mask.length);
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          let v = 1;
-          for (let dy = -radius; dy <= radius && v; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-              const yy = y + dy, xx = x + dx;
-              if (yy < 0 || yy >= H || xx < 0 || xx >= W || !mask[yy * W + xx]) { v = 0; break; }
-            }
-          }
-          out[y * W + x] = v;
-        }
-      }
-      return out;
-    }
-
-    // 基于掩模绘制心形轮廓线：检测内外边界并按行合并画段（厚度3 + 光晕）
-    function drawMaskOutline(mask, W, H, ctx, color = '#FF4545', thickness = 3) {
-      ctx.save();
-      ctx.fillStyle = color;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 6;
-
-      for (let y = 1; y < H - 1; y++) {
-        let runStart = -1;
-        for (let x = 1; x < W - 1; x++) {
-          const i = y * W + x;
-          if (mask[i] === 1) {
-            const isEdge =
-              mask[i - 1] === 0 || mask[i + 1] === 0 ||
-              mask[i - W] === 0 || mask[i + W] === 0 ||
-              mask[i - W - 1] === 0 || mask[i - W + 1] === 0 ||
-              mask[i + W - 1] === 0 || mask[i + W + 1] === 0;
-
-            if (isEdge && runStart < 0) runStart = x;
-            if (!isEdge && runStart >= 0) {
-              const len = x - runStart;
-              ctx.fillRect(runStart - thickness / 2, y - thickness / 2, len + thickness, thickness);
-              runStart = -1;
-            }
-          } else if (runStart >= 0) {
-            const len = x - runStart;
-            ctx.fillRect(runStart - thickness / 2, y - thickness / 2, len + thickness, thickness);
-            runStart = -1;
-          }
-        }
-        if (runStart >= 0) {
-          const len = (W - 1) - runStart;
-          ctx.fillRect(runStart - thickness / 2, y - thickness / 2, len + thickness, thickness);
-        }
-      }
-      ctx.restore();
     }
   </script>
