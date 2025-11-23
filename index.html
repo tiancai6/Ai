@@ -321,13 +321,13 @@
 
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
 
-      /* 碰撞格子避免重叠 + 覆盖率统计（更紧凑） */
-      const cell = 12; /* 较小格子，提升贴合密度 */
+      /* 更紧凑的碰撞格子与覆盖率统计 */
+      const cell = 10; /* 从 12 降到 10，提升贴合密度 */
       const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
       const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
       const covered = Array.from({ length: rows }, () => Array(cols).fill(0));
 
-      // 统计心形区域的格子数量（用于覆盖率）
+      // 统计黑色区域的格子数量（用于覆盖率）
       let shapeCells = 0;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
@@ -338,11 +338,11 @@
       }
 
       const occupy = (x, y, w, h) => {
-        const c0 = Math.max(0, Math.floor(x / cell)), r0 = Math.max(0, Math.floor(y / cell));
-        const c1 = Math.min(cols - 1, Math.floor((x + w) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h) / cell));
+        const pad = 2; /* 轻微收缩占位，词之间更贴近 */
+        const c0 = Math.max(0, Math.floor((x + pad) / cell)), r0 = Math.max(0, Math.floor((y + pad) / cell));
+        const c1 = Math.min(cols - 1, Math.floor((x + w - pad) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h - pad) / cell));
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (grid[r][c]) return false;
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1;
-        // 标记覆盖率
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) covered[r][c] = 1;
         return true;
       };
@@ -352,22 +352,34 @@
         return shapeCells ? coveredCells / shapeCells : 0;
       };
 
-      /* 字体鲜红色，增大字号范围 */
       const brightRed = '#FF2B2B';
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(18 + t * 50); /* 18px ~ 68px 更大 */
+        return Math.round(18 + t * 50); /* 18px ~ 68px */
       };
 
       function sampleInside() {
-        for (let k = 0; k < 800; k++) {
+        for (let k = 0; k < 1200; k++) {
           const x = Math.floor(Math.random() * W);
           const y = Math.floor(Math.random() * H);
           if (inside(x, y)) return { x, y };
         }
         return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
+      }
+      // 填缝优先：从未覆盖网格里采样，尽量塞进空隙
+      function sampleGap() {
+        for (let tries = 0; tries < 1000; tries++) {
+          const c = Math.floor(Math.random() * cols);
+          const r = Math.floor(Math.random() * rows);
+          if (!covered[r][c]) {
+            const x = Math.floor(c * cell + cell / 2);
+            const y = Math.floor(r * cell + cell / 2);
+            if (inside(x, y)) return { x, y };
+          }
+        }
+        return sampleInside();
       }
 
       /* 第一阶段：按词频从大到小布局（更紧凑的垂直占位与基线） */
@@ -377,9 +389,9 @@
         ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
         const text = t.word;
         const w = Math.ceil(ctx.measureText(text).width);
-        const h = Math.ceil(size * 1.08); /* 从 1.2 降到 1.08，增密 */
+        const h = Math.ceil(size * 1.04); /* 从 1.08 降到 1.04，增密 */
         let placed = false;
-        for (let tries = 0; tries < 220 && !placed; tries++) {
+        for (let tries = 0; tries < 280 && !placed; tries++) {
           const p = sampleInside();
           const x = Math.round(p.x - w / 2);
           const y = Math.round(p.y - h / 2);
@@ -387,41 +399,39 @@
           if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
           if (!occupy(x, y, w, h)) continue;
           ctx.fillStyle = brightRed;
-          ctx.fillText(text, x, y + h * 0.82); /* baseline 微调，减少上下留白 */
+          ctx.fillText(text, x, y + h * 0.84); /* baseline 微调，减少上下留白 */
           placed = true;
         }
       });
 
       /* 第二阶段：重复高频词并用小字号填缝，尽量提高覆盖率（保留白色缝隙） */
-      const target = 0.92; /* 目标覆盖率，尽量填满黑色区域 */
-      const topWords = tokens.slice(0, Math.min(12, tokens.length)).map(t => t.word);
+      const target = 0.96; /* 目标覆盖率更高 */
+      const topWords = tokens.slice(0, Math.min(20, tokens.length)).map(t => t.word);
       let fillRounds = 0;
-      while (coverageRatio() < target && fillRounds < 8) {
+      while (coverageRatio() < target && fillRounds < 10) {
         for (let k = 0; k < topWords.length; k++) {
           const text = topWords[k];
-          const size = Math.max(12, 20 - fillRounds * 2); /* 最小字号更小以填缝 */
+          const size = Math.max(10, 18 - fillRounds * 2); /* 最小字号 10px */
           ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
           const w = Math.ceil(ctx.measureText(text).width);
-          const h = Math.ceil(size * 1.08);
+          const h = Math.ceil(size * 1.04);
           let placed = false;
-          for (let tries = 0; tries < 200 && !placed; tries++) {
-            const p = sampleInside();
+          for (let tries = 0; tries < 240 && !placed; tries++) {
+            const p = sampleGap(); /* 优先往空隙里塞 */
             const x = Math.round(p.x - w / 2);
             const y = Math.round(p.y - h / 2);
             if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-            if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
+            if (!inside(p.x, p.y)) continue; /* 保证仍在黑色区域内 */
             if (!occupy(x, y, w, h)) continue;
             ctx.fillStyle = brightRed;
-            ctx.fillText(text, x, y + h * 0.82);
+            ctx.fillText(text, x, y + h * 0.84);
             placed = true;
           }
         }
         fillRounds++;
-        if (fillRounds >= 8) break;
       }
 
-      /* 按你的要求：不再绘制边框线与光晕 */
-      // 不叠加轮廓，白色区域作为缝隙保留
+      // 不叠加轮廓；白色部分作为缝隙保留
     }
 
     // 仅黑色为形状内部的掩模（白色与透明为外部/缝隙）
