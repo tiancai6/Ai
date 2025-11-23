@@ -10,8 +10,8 @@
     body {
       font-family: system-ui, -apple-system, Segoe UI, Arial;
       margin: 0;
-      background: #fafafa;
-      color: #263238;
+      background: #000;      /* 播放界面统一黑色背景 */
+      color: #fff;           /* 基本文字使用白色 */
     }
     #container { max-width: 960px; margin: 0 auto; padding: 24px; }
 
@@ -34,6 +34,7 @@
       box-shadow: 0 20px 60px rgba(20,30,50,.25);
       padding: 22px 22px 18px;
       border: 1px solid rgba(33,150,243,.12);
+      color: #263238;
     }
     #overlay h3 {
       margin: 4px 0 14px;
@@ -125,7 +126,7 @@
             <div class="row">
               <textarea id="overlayContent" class="ui-textarea" placeholder="写下你的想法..." maxlength="2000"></textarea>
             </div>
-              <button id="overlaySubmit" class="ui-button" type="submit">提交</button>
+            <button id="overlaySubmit" class="ui-button" type="submit">提交</button>
           </form>
         </div>
       </div>
@@ -267,7 +268,7 @@
       return arr.slice(0, 120);
     }
 
-    // 加载图片（优先心跳.png）
+    // 加载图片（仅使用心跳.png）
     async function loadMaskImage() {
       return await loadImage('心跳.png');
     }
@@ -291,7 +292,6 @@
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
-      // 样式宽高由 CSS 控制为 100%，此处仅设置像素尺寸
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       /* 黑色背景 */
@@ -322,7 +322,7 @@
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
 
       /* 更紧凑的碰撞格子与覆盖率统计 */
-      const cell = 10; /* 从 12 降到 10，提升贴合密度 */
+      const cell = 10; /* 较小格子，提升贴合密度 */
       const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
       const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
       const covered = Array.from({ length: rows }, () => Array(cols).fill(0));
@@ -352,12 +352,13 @@
         return shapeCells ? coveredCells / shapeCells : 0;
       };
 
+      /* 字体鲜红色，增大字号范围 */
       const brightRed = '#FF2B2B';
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(18 + t * 50); /* 18px ~ 68px */
+        return Math.round(18 + t * 50); /* 18px ~ 68px 更大 */
       };
 
       function sampleInside() {
@@ -368,7 +369,7 @@
         }
         return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
       }
-      // 填缝优先：从未覆盖网格里采样，尽量塞进空隙
+      // 填缝优先：从未覆盖网格里采样，尽量“往空隙里塞字”
       function sampleGap() {
         for (let tries = 0; tries < 1000; tries++) {
           const c = Math.floor(Math.random() * cols);
@@ -384,12 +385,13 @@
 
       /* 第一阶段：按词频从大到小布局（更紧凑的垂直占位与基线） */
       tokens.sort((a, b) => b.count - a.count);
+      let placedCount = 0;
       tokens.forEach((t) => {
         const size = fontSize(t.count);
         ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
         const text = t.word;
         const w = Math.ceil(ctx.measureText(text).width);
-        const h = Math.ceil(size * 1.04); /* 从 1.08 降到 1.04，增密 */
+        const h = Math.ceil(size * 1.04); /* 从 1.2/1.08 降到 1.04，增密 */
         let placed = false;
         for (let tries = 0; tries < 280 && !placed; tries++) {
           const p = sampleInside();
@@ -400,9 +402,32 @@
           if (!occupy(x, y, w, h)) continue;
           ctx.fillStyle = brightRed;
           ctx.fillText(text, x, y + h * 0.84); /* baseline 微调，减少上下留白 */
-          placed = true;
+          placed = true; placedCount++;
         }
       });
+
+      /* 如果没有任何词放置成功，兜底用“爱”填充，避免空画面 */
+      if (placedCount === 0) {
+        const text = '爱';
+        for (let i = 0; i < 300; i++) {
+          const size = 24 + Math.floor(Math.random() * 32);
+          ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
+          const w = Math.ceil(ctx.measureText(text).width);
+          const h = Math.ceil(size * 1.04);
+          let placed = false;
+          for (let tries = 0; tries < 240 && !placed; tries++) {
+            const p = sampleInside();
+            const x = Math.round(p.x - w / 2);
+            const y = Math.round(p.y - h / 2);
+            if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+            if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
+            if (!occupy(x, y, w, h)) continue;
+            ctx.fillStyle = brightRed;
+            ctx.fillText(text, x, y + h * 0.84);
+            placed = true;
+          }
+        }
+      }
 
       /* 第二阶段：重复高频词并用小字号填缝，尽量提高覆盖率（保留白色缝隙） */
       const target = 0.96; /* 目标覆盖率更高 */
@@ -431,23 +456,24 @@
         fillRounds++;
       }
 
-      // 不叠加轮廓；白色部分作为缝隙保留
+      /* 不叠加轮廓线；白色部分作为缝隙保留 */
     }
 
-    // 仅黑色为形状内部的掩模（白色与透明为外部/缝隙）
+    // 仅黑色为形状内部的掩模（放宽阈值，兼容深灰；保留白色缝隙）
     function makeBlackMask(data, W, H) {
       const mask = new Uint8Array(W * H);
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const i = (y * W + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-          // ITU-R BT.709 加权的亮度估计
-          const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          // 透明或偏亮（白色/灰白）都视为外部；只保留深黑
-          const isInside = (a >= 20) && (Y <= 60);
+          const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b; // 亮度估计
+          // 透明或偏亮（白色/灰白）都视为外部；仅保留深黑/深灰
+          const isInside = (a >= 5) && (Y <= 140 || (r <= 130 && g <= 130 && b <= 130));
           mask[y * W + x] = isInside ? 1 : 0;
         }
       }
       return mask;
     }
   </script>
+</body>
+</html>
