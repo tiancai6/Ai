@@ -453,88 +453,77 @@
         return sampleInside();
       }
 
-      // 更小字号映射：整体变小、更易堆叠
+      // 更小字号映射：整体变小，更易一次性放下更多不同词
       const brightRed = '#FF2B2B';
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
-        const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(12 + t * 36); // 18~68 -> 12~48，更小且密
+          const t = (c - min) / Math.max(1, (max - min));
+          return Math.round(12 + t * 36); // 12~48
       };
-
-      // 第一阶段：主排布（降低垂直占位、基线更紧）
+  
+      // 第一阶段：每个词最多放置一次
       tokens.sort((a, b) => b.count - a.count);
-      let placedCount = 0;
+      const placedWords = new Set();
+      const unplaced = [];
       tokens.forEach((t) => {
-        const size = fontSize(t.count);
-        ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
-        const text = t.word;
-        const w = Math.ceil(ctx.measureText(text).width);
-        const h = Math.ceil(size * 1.01); // 1.03 -> 1.01，进一步增密
-        let placed = false;
-        for (let tries = 0; tries < 360 && !placed; tries++) { // 320 -> 360，略增尝试次数
-            const p = sampleInside();
-            const x = Math.round(p.x - w / 2);
-            const y = Math.round(p.y - h / 2);
-            if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-            if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
-            if (!occupy(x, y, w, h)) continue;
-            ctx.fillStyle = brightRed;
-            ctx.fillText(text, x, y + h * 0.85); // 0.86 -> 0.85，减少上下留白
-            placed = true; placedCount++;
-        }
-    });
-
-    // 兜底：用更小的“爱”填充，避免空画面
-    if (placedCount === 0) {
-        const text = '爱';
-        for (let i = 0; i < 420; i++) { // 360 -> 420
-            const size = 10 + Math.floor(Math.random() * 12); // 24~60 -> 10~22，更小更密
-            ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
-            const w = Math.ceil(ctx.measureText(text).width);
-            const h = Math.ceil(size * 1.01);
-            let placed = false;
-            for (let tries = 0; tries < 320 && !placed; tries++) { // 280 -> 320
-                const p = sampleInside();
-                const x = Math.round(p.x - w / 2);
-                const y = Math.round(p.y - h / 2);
-                if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-                if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
-                if (!occupy(x, y, w, h)) continue;
-                ctx.fillStyle = brightRed;
-                ctx.fillText(text, x, y + h * 0.85);
-                placed = true;
-            }
-        }
-    }
-
-    // 第二阶段：更强填缝（更高覆盖率、更小字号、更多重复词）
-    const target = 0.995; // 0.98 -> 0.995，更接近“全满”
-    const topWords = tokens.slice(0, Math.min(60, tokens.length)).map(t => t.word); // 40 -> 60
-    let fillRounds = 0;
-    while (coverageRatio() < target && fillRounds < 18) { // 12 -> 18
-        for (let k = 0; k < topWords.length; k++) {
-            const text = topWords[k];
-            const size = Math.max(6, 16 - fillRounds * 2); // 最小字号 8 -> 6
-            ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
-            const w = Math.ceil(ctx.measureText(text).width);
-            const h = Math.ceil(size * 1.01);
-            let placed = false;
-            for (let tries = 0; tries < 320 && !placed; tries++) { // 280 -> 320
-                const p = sampleGap();
-                const x = Math.round(p.x - w / 2);
-                const y = Math.round(p.y - h / 2);
-                if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-                if (!inside(p.x, p.y)) continue;
-                if (!occupy(x, y, w, h)) continue;
-                ctx.fillStyle = brightRed;
-                ctx.fillText(text, x, y + h * 0.85);
-                placed = true;
-            }
-        }
-        fillRounds++;
-    }
-
+          const text = t.word;
+          if (placedWords.has(text)) return;
+          const size = fontSize(t.count);
+          ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
+          const w = Math.ceil(ctx.measureText(text).width);
+          const h = Math.ceil(size * 1.01);
+          let placed = false;
+          for (let tries = 0; tries < 360 && !placed; tries++) {
+              const p = sampleInside();
+              const x = Math.round(p.x - w / 2);
+              const y = Math.round(p.y - h / 2);
+              if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+              if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
+              if (!occupy(x, y, w, h)) continue;
+              ctx.fillStyle = brightRed;
+              ctx.fillText(text, x, y + h * 0.85);
+              placed = true;
+              placedWords.add(text);
+          }
+          if (!placed) unplaced.push(t);
+      });
+  
+      // 第二阶段（无重复）：仅尝试把未放下的词通过缩小字号再放进去
+      let rounds = 0;
+      while (rounds < 10 && unplaced.length) {
+          let anyPlaced = false;
+          for (let i = unplaced.length - 1; i >= 0; i--) {
+              const t = unplaced[i];
+              if (placedWords.has(t.word)) { unplaced.splice(i, 1); continue; }
+              const base = fontSize(t.count);
+              const sz = Math.max(6, base - (rounds + 1) * 3); // 每轮缩 3px，下限 6
+              if (sz < 6) continue;
+              ctx.font = `bold ${sz}px system-ui, -apple-system, Segoe UI, Arial`;
+              const text = t.word;
+              const w = Math.ceil(ctx.measureText(text).width);
+              const h = Math.ceil(sz * 1.01);
+              let placed = false;
+              for (let tries = 0; tries < 320 && !placed; tries++) {
+                  const p = sampleInside();
+                  const x = Math.round(p.x - w / 2);
+                  const y = Math.round(p.y - h / 2);
+                  if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+                  if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
+                  if (!occupy(x, y, w, h)) continue;
+                  ctx.fillStyle = brightRed;
+                  ctx.fillText(text, x, y + h * 0.85);
+                  placed = true;
+                  placedWords.add(text);
+                  unplaced.splice(i, 1);
+                  anyPlaced = true;
+              }
+          }
+          if (!anyPlaced) break;
+          rounds++;
+      }
+  
+      // 移除重复填缝与“爱”兜底，不再放任何重复词
       /* 不叠加轮廓线；白色部分作为缝隙保留 */
     }
 
