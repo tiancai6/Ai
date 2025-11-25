@@ -257,22 +257,84 @@
       const normalize = s => s.toLowerCase().replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, ' ');
       const add = w => { if (!w || stop.has(w)) return; freq.set(w, (freq.get(w) || 0) + 1); };
     
-      for (const t of texts) {
-        const s = normalize(t);
-        // 英文：按词（≥2字符），保持原有逻辑
-        const words = s.match(/\p{L}[\p{L}\p{N}_]{1,}/gu) || [];
-        words.forEach(add);
+      // 英文匹配（带属性转义的回退）
+      const matchEN = (s) => {
+          try {
+              return s.match(/\p{L}[\p{L}\p{N}_']{1,}/gu) || [];
+          } catch {
+              return s.match(/[A-Za-z][A-Za-z0-9_']{1,}/g) || [];
+          }
+      };
     
-        // 中文：仅统计二字/三字滑窗，避免单字碎片
-        const zhSeqs = s.match(/[\u4e00-\u9fff]+/g) || [];
-        zhSeqs.forEach(seq => {
-            if (seq.length >= 2) for (let i = 0; i < seq.length - 1; i++) add(seq.slice(i, i + 2)); // 二字
-            if (seq.length >= 3) for (let i = 0; i < seq.length - 2; i++) add(seq.slice(i, i + 3)); // 三字
-        });
+      // 一次性在全集里挖中文候选词（2~6字 n-gram + 左右邻接多样性）
+      const candCount = new Map();               // 词 -> 频次
+      const leftNei = new Map();                 // 词 -> 左邻集合
+      const rightNei = new Map();                // 词 -> 右邻集合
+    
+      const zhSeqsAll = [];
+      for (const t of texts) {
+          const s = normalize(t);
+          zhSeqsAll.push(...(s.match(/[\u4e00-\u9fff]+/g) || []));
+          // 先统计英文
+          const enWords = matchEN(s);
+          enWords.forEach(add);
       }
+      // 中文 n-gram 统计
+      for (const seq of zhSeqsAll) {
+          const L = seq.length;
+          for (let i = 0; i < L; i++) {
+              for (let n = 2; n <= 6 && i + n <= L; n++) {
+                  const tok = seq.slice(i, i + n);
+                  candCount.set(tok, (candCount.get(tok) || 0) + 1);
+                  const lch = i > 0 ? seq[i - 1] : '^';
+                  const rch = i + n < L ? seq[i + n] : '$';
+                  if (!leftNei.has(tok)) leftNei.set(tok, new Set());
+                  if (!rightNei.has(tok)) rightNei.set(tok, new Set());
+                  leftNei.get(tok).add(lch);
+                  rightNei.get(tok).add(rch);
+              }
+          }
+      }
+      // 候选筛选：出现≥2次；或长度≥3且左右邻接多样性≥2（更像独立词）
+      const dict = new Set();
+      for (const [tok, count] of candCount.entries()) {
+          const len = tok.length;
+          const ldiv = (leftNei.get(tok)?.size || 0);
+          const rdiv = (rightNei.get(tok)?.size || 0);
+          const keep = (count >= 2) || (len >= 3 && (ldiv >= 2 || rdiv >= 2));
+          if (keep && !stop.has(tok)) dict.add(tok);
+      }
+    
+      // 中文最长匹配分词（不落单字）
+      const segmentZh = (seq) => {
+          const out = [];
+          let i = 0;
+          while (i < seq.length) {
+              let matched = '';
+              const maxLen = Math.min(6, seq.length - i);
+              for (let n = maxLen; n >= 2; n--) {
+                  const tok = seq.slice(i, i + n);
+                  if (dict.has(tok)) { matched = tok; break; }
+              }
+              if (matched) {
+                  out.push(matched);
+                  i += matched.length;
+              } else {
+                  // 单字不计入（避免碎片）；直接跳过该字
+                  i += 1;
+              }
+          }
+          return out;
+      };
+    
+      // 应用到所有中文序列
+      for (const seq of zhSeqsAll) {
+          segmentZh(seq).forEach(add);
+      }
+    
       const arr = Array.from(freq.entries()).map(([word, count]) => ({ word, count }));
       arr.sort((a, b) => b.count - a.count);
-      return arr.slice(0, 800); // 400 -> 800，扩大唯一词上限
+      return arr.slice(0, 1200); // 扩大唯一词上限，容纳更多不同词
     }
 
     // 加载图片（仅使用心跳.png）
