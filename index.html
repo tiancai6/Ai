@@ -256,25 +256,23 @@
       const freq = new Map();
       const normalize = s => s.toLowerCase().replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, ' ');
       const add = w => { if (!w || stop.has(w)) return; freq.set(w, (freq.get(w) || 0) + 1); };
-
+    
       for (const t of texts) {
         const s = normalize(t);
-        // 英文：保持原有按词（>=2字符）匹配
+        // 英文：按词（≥2字符），保持原有逻辑
         const words = s.match(/\p{L}[\p{L}\p{N}_]{1,}/gu) || [];
         words.forEach(add);
-
-        // 中文：同时计入“双字滑窗”和“单字”，提升词量
+    
+        // 中文：仅统计二字/三字滑窗，避免单字碎片
         const zhSeqs = s.match(/[\u4e00-\u9fff]+/g) || [];
         zhSeqs.forEach(seq => {
-          // 二字滑窗
-          if (seq.length >= 2) for (let i = 0; i < seq.length - 1; i++) add(seq.slice(i, i + 2));
-          // 单字
-          for (let i = 0; i < seq.length; i++) add(seq.slice(i, i + 1));
+            if (seq.length >= 2) for (let i = 0; i < seq.length - 1; i++) add(seq.slice(i, i + 2)); // 二字
+            if (seq.length >= 3) for (let i = 0; i < seq.length - 2; i++) add(seq.slice(i, i + 3)); // 三字
         });
       }
       const arr = Array.from(freq.entries()).map(([word, count]) => ({ word, count }));
       arr.sort((a, b) => b.count - a.count);
-      return arr.slice(0, 400); // 扩大唯一词上限
+      return arr.slice(0, 800); // 400 -> 800，扩大唯一词上限
     }
 
     // 加载图片（仅使用心跳.png）
@@ -330,8 +328,8 @@
 
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
 
-      // 更紧凑网格与覆盖率
-      const cell = 8; // 10 -> 8，提升贴合密度
+      // 更密碰撞网格与覆盖率
+      const cell = 6; // 8 -> 6，提升贴合密度
       const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
       const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
       const covered = Array.from({ length: rows }, () => Array(cols).fill(0));
@@ -344,50 +342,24 @@
       }
 
       const occupy = (x, y, w, h) => {
-        const pad = 1; // 2 -> 1，允许更贴近但不重叠
+        const pad = 0; // 1 -> 0，进一步降低占位收缩，增强贴合
         const c0 = Math.max(0, Math.floor((x + pad) / cell)), r0 = Math.max(0, Math.floor((y + pad) / cell));
         const c1 = Math.min(cols - 1, Math.floor((x + w - pad) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h - pad) / cell));
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (grid[r][c]) return false;
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1, covered[r][c] = 1;
         return true;
       };
-      const coverageRatio = () => {
-        let coveredCells = 0;
-        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (covered[r][c]) coveredCells++;
-        return shapeCells ? coveredCells / shapeCells : 0;
-      };
 
+      // 更小字号映射：整体变小、更易堆叠
       const brightRed = '#FF2B2B';
       const max = tokens.length ? tokens[0].count : 1;
       const min = tokens.length ? tokens[tokens.length - 1].count : 1;
       const fontSize = c => {
         const t = (c - min) / Math.max(1, (max - min));
-        return Math.round(18 + t * 50); // 18px ~ 68px
+        return Math.round(12 + t * 36); // 18~68 -> 12~48，更小且密
       };
 
-      function sampleInside() {
-        for (let k = 0; k < 1500; k++) {
-          const x = Math.floor(Math.random() * W);
-          const y = Math.floor(Math.random() * H);
-          if (inside(x, y)) return { x, y };
-        }
-        return { x: Math.floor(W / 2), y: Math.floor(H / 2) };
-      }
-      // 优先从“未覆盖格子”采样，专门往空隙塞字
-      function sampleGap() {
-        for (let tries = 0; tries < 1200; tries++) {
-          const c = Math.floor(Math.random() * cols);
-          const r = Math.floor(Math.random() * rows);
-          if (!covered[r][c]) {
-            const x = Math.floor(c * cell + cell / 2);
-            const y = Math.floor(r * cell + cell / 2);
-            if (inside(x, y)) return { x, y };
-          }
-        }
-        return sampleInside();
-      }
-
-      // 第一阶段：按词频从大到小布局（更紧凑的垂直占位与基线）
+      // 第一阶段：主排布（降低垂直占位、基线更紧）
       tokens.sort((a, b) => b.count - a.count);
       let placedCount = 0;
       tokens.forEach((t) => {
@@ -395,31 +367,9 @@
         ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
         const text = t.word;
         const w = Math.ceil(ctx.measureText(text).width);
-        const h = Math.ceil(size * 1.03); // 1.04 -> 1.03，进一步增密
+        const h = Math.ceil(size * 1.01); // 1.03 -> 1.01，进一步增密
         let placed = false;
-        for (let tries = 0; tries < 320 && !placed; tries++) {
-          const p = sampleInside();
-          const x = Math.round(p.x - w / 2);
-          const y = Math.round(p.y - h / 2);
-          if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-          if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
-          if (!occupy(x, y, w, h)) continue;
-          ctx.fillStyle = brightRed;
-          ctx.fillText(text, x, y + h * 0.86); // 基线再微调，减少上下留白
-          placed = true; placedCount++;
-        }
-      });
-
-      // 兜底：若没有任何词成功放置，用“爱”填满黑色区域，避免空画面
-      if (placedCount === 0) {
-        const text = '爱';
-        for (let i = 0; i < 360; i++) {
-          const size = 24 + Math.floor(Math.random() * 36);
-          ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
-          const w = Math.ceil(ctx.measureText(text).width);
-          const h = Math.ceil(size * 1.03);
-          let placed = false;
-          for (let tries = 0; tries < 280 && !placed; tries++) {
+        for (let tries = 0; tries < 360 && !placed; tries++) { // 320 -> 360，略增尝试次数
             const p = sampleInside();
             const x = Math.round(p.x - w / 2);
             const y = Math.round(p.y - h / 2);
@@ -427,38 +377,60 @@
             if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
             if (!occupy(x, y, w, h)) continue;
             ctx.fillStyle = brightRed;
-            ctx.fillText(text, x, y + h * 0.86);
-            placed = true;
-          }
+            ctx.fillText(text, x, y + h * 0.85); // 0.86 -> 0.85，减少上下留白
+            placed = true; placedCount++;
         }
-      }
+    });
 
-      // 第二阶段：更强填缝策略（更高覆盖率、更小字号、更多重复词）
-      const target = 0.98; // 0.96 -> 0.98
-      const topWords = tokens.slice(0, Math.min(40, tokens.length)).map(t => t.word); // 20 -> 40
-      let fillRounds = 0;
-      while (coverageRatio() < target && fillRounds < 12) { // 10 -> 12
+    // 兜底：用更小的“爱”填充，避免空画面
+    if (placedCount === 0) {
+        const text = '爱';
+        for (let i = 0; i < 420; i++) { // 360 -> 420
+            const size = 10 + Math.floor(Math.random() * 12); // 24~60 -> 10~22，更小更密
+            ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
+            const w = Math.ceil(ctx.measureText(text).width);
+            const h = Math.ceil(size * 1.01);
+            let placed = false;
+            for (let tries = 0; tries < 320 && !placed; tries++) { // 280 -> 320
+                const p = sampleInside();
+                const x = Math.round(p.x - w / 2);
+                const y = Math.round(p.y - h / 2);
+                if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+                if (!inside(p.x, p.y) || !inside(x, y) || !inside(x + w, y) || !inside(x, y + h) || !inside(x + w, y + h)) continue;
+                if (!occupy(x, y, w, h)) continue;
+                ctx.fillStyle = brightRed;
+                ctx.fillText(text, x, y + h * 0.85);
+                placed = true;
+            }
+        }
+    }
+
+    // 第二阶段：更强填缝（更高覆盖率、更小字号、更多重复词）
+    const target = 0.995; // 0.98 -> 0.995，更接近“全满”
+    const topWords = tokens.slice(0, Math.min(60, tokens.length)).map(t => t.word); // 40 -> 60
+    let fillRounds = 0;
+    while (coverageRatio() < target && fillRounds < 18) { // 12 -> 18
         for (let k = 0; k < topWords.length; k++) {
-          const text = topWords[k];
-          const size = Math.max(8, 18 - fillRounds * 2); // 最小字号 10 -> 8
-          ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
-          const w = Math.ceil(ctx.measureText(text).width);
-          const h = Math.ceil(size * 1.03);
-          let placed = false;
-          for (let tries = 0; tries < 280 && !placed; tries++) { // 240 -> 280
-            const p = sampleGap();
-            const x = Math.round(p.x - w / 2);
-            const y = Math.round(p.y - h / 2);
-            if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
-            if (!inside(p.x, p.y)) continue;
-            if (!occupy(x, y, w, h)) continue;
-            ctx.fillStyle = brightRed;
-            ctx.fillText(text, x, y + h * 0.86);
-            placed = true;
-          }
+            const text = topWords[k];
+            const size = Math.max(6, 16 - fillRounds * 2); // 最小字号 8 -> 6
+            ctx.font = `bold ${size}px system-ui, -apple-system, Segoe UI, Arial`;
+            const w = Math.ceil(ctx.measureText(text).width);
+            const h = Math.ceil(size * 1.01);
+            let placed = false;
+            for (let tries = 0; tries < 320 && !placed; tries++) { // 280 -> 320
+                const p = sampleGap();
+                const x = Math.round(p.x - w / 2);
+                const y = Math.round(p.y - h / 2);
+                if (x < 0 || y < 0 || x + w >= W || y + h >= H) continue;
+                if (!inside(p.x, p.y)) continue;
+                if (!occupy(x, y, w, h)) continue;
+                ctx.fillStyle = brightRed;
+                ctx.fillText(text, x, y + h * 0.85);
+                placed = true;
+            }
         }
         fillRounds++;
-      }
+    }
 
       /* 不叠加轮廓线；白色部分作为缝隙保留 */
     }
