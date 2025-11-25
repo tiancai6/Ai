@@ -329,26 +329,67 @@
       const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x] === 1;
 
       // 更密碰撞网格与覆盖率
-      const cell = 6; // 8 -> 6，提升贴合密度
+      const cell = 6;
       const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
       const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
       const covered = Array.from({ length: rows }, () => Array(cols).fill(0));
-
+  
       let shapeCells = 0;
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
         const cx = Math.floor(c * cell + cell / 2);
         const cy = Math.floor(r * cell + cell / 2);
         if (inside(cx, cy)) shapeCells++;
       }
-
+  
       const occupy = (x, y, w, h) => {
-        const pad = 0; // 1 -> 0，进一步降低占位收缩，增强贴合
+        const pad = 0;
         const c0 = Math.max(0, Math.floor((x + pad) / cell)), r0 = Math.max(0, Math.floor((y + pad) / cell));
         const c1 = Math.min(cols - 1, Math.floor((x + w - pad) / cell)), r1 = Math.min(rows - 1, Math.floor((y + h - pad) / cell));
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (grid[r][c]) return false;
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[r][c] = 1, covered[r][c] = 1;
         return true;
       };
+  
+      const coverageRatio = () => {
+        let coveredCells = 0;
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (covered[r][c]) coveredCells++;
+        return shapeCells ? coveredCells / shapeCells : 0;
+      };
+  
+      // 新增：采样函数（形状内随机 + 空隙优先）
+      function sampleInside() {
+        // 随机采样到形状内部
+        for (let k = 0; k < 1500; k++) {
+          const x = Math.floor(Math.random() * W);
+          const y = Math.floor(Math.random() * H);
+          if (inside(x, y)) return { x, y };
+        }
+        // 回退：从中心向外辐射搜索
+        const cx = Math.floor(W / 2), cy = Math.floor(H / 2);
+        if (inside(cx, cy)) return { x: cx, y: cy };
+        for (let r = 2; r < Math.max(W, H); r += 4) {
+          for (let a = 0; a < 360; a += 12) {
+            const x = Math.floor(cx + r * Math.cos(a * Math.PI / 180));
+            const y = Math.floor(cy + r * Math.sin(a * Math.PI / 180));
+            if (inside(x, y)) return { x, y };
+          }
+        }
+        return { x: cx, y: cy };
+      }
+  
+      function sampleGap() {
+        // 优先在尚未覆盖的网格中心采样
+        for (let tries = 0; tries < 1200; tries++) {
+          const c = Math.floor(Math.random() * cols);
+          const r = Math.floor(Math.random() * rows);
+          if (!covered[r][c]) {
+            const x = Math.floor(c * cell + cell / 2);
+            const y = Math.floor(r * cell + cell / 2);
+            if (inside(x, y)) return { x, y };
+          }
+        }
+        return sampleInside();
+      }
 
       // 更小字号映射：整体变小、更易堆叠
       const brightRed = '#FF2B2B';
