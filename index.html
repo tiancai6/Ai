@@ -168,13 +168,14 @@
       video.play().catch(() => {});
     });
 
-    // 视频结束：显示弹窗（只能一次）
+    // 视频结束：显示弹窗（允许多次评论）
     video.addEventListener('ended', () => {
       overlay.style.display = 'flex';
       if (localStorage.getItem(submittedKey) === '1') {
-        overlayAuthorEl.disabled = true;
-        overlayContentEl.disabled = true;
-        overlaySubmitBtn.disabled = true;
+        overlay.style.display = 'flex';
+        overlayAuthorEl.disabled = false;
+        overlayContentEl.disabled = false;
+        overlaySubmitBtn.disabled = false;
       }
     });
 
@@ -194,6 +195,7 @@
         });
         const data = await resp.json();
         if (!resp.ok || !data.ok) throw new Error(data.error || '提交失败');
+
 
         // 标记仅一次
         localStorage.setItem(submittedKey, '1');
